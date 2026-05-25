@@ -2,7 +2,6 @@ export interface HistoryItem {
   id: number;
   room: string;
   content: string;
-  content_hash: string;
   user_id: number;
   pinned: number;
   preserved: number;
@@ -12,32 +11,25 @@ export interface HistoryItem {
 
 const MAX_HISTORY = 50;
 
-async function computeHash(content: string): Promise<string> {
-  const data = new TextEncoder().encode(content);
-  const buffer = await crypto.subtle.digest('SHA-256', data);
-  return [...new Uint8Array(buffer)].slice(0, 8).map(b => b.toString(16).padStart(2, '0')).join('');
-}
+export async function saveHistory(db: D1Database, room: string, content: string, userId: number, entryId: number | null): Promise<number> {
+  if (!content.trim()) return entryId || 0;
 
-export async function saveHistory(db: D1Database, room: string, content: string, userId: number): Promise<void> {
-  if (!content.trim()) return;
-
-  const hash = await computeHash(content);
-
-  const existing = await db.prepare(
-    'SELECT id FROM history WHERE room = ? AND content_hash = ?'
-  ).bind(room, hash).first<{ id: number }>();
-
-  if (existing) {
+  // 有 entryId → UPDATE 当前条目
+  if (entryId) {
     await db.prepare(
-      "UPDATE history SET updated_at = datetime('now'), content = ? WHERE id = ?"
-    ).bind(content, existing.id).run();
-    return;
+      "UPDATE history SET content = ?, updated_at = datetime('now') WHERE id = ? AND room = ?"
+    ).bind(content, entryId, room).run();
+    return entryId;
   }
 
-  await db.prepare(
-    'INSERT INTO history (room, content, content_hash, user_id) VALUES (?, ?, ?, ?)'
-  ).bind(room, content, hash, userId).run();
+  // 无 entryId → INSERT 新条目
+  const result = await db.prepare(
+    'INSERT INTO history (room, content, user_id) VALUES (?, ?, ?)'
+  ).bind(room, content, userId).run();
 
+  const newId = result.meta.last_row_id as number;
+
+  // 清理超出上限的旧记录（不清理 pinned/preserved）
   const count = await db.prepare(
     'SELECT COUNT(*) as c FROM history WHERE room = ? AND preserved = 0 AND pinned = 0'
   ).bind(room).first<{ c: number }>();
@@ -50,6 +42,8 @@ export async function saveHistory(db: D1Database, room: string, content: string,
       )`
     ).bind(room, count.c - MAX_HISTORY).run();
   }
+
+  return newId;
 }
 
 export async function getHistory(db: D1Database, room: string, query: string): Promise<HistoryItem[]> {

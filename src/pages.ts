@@ -198,8 +198,9 @@ editor.addEventListener('input',()=>{
 });
 
 // New session
-function newSession(){
+async function newSession(){
   if(editor.value.trim()&&ws&&ws.readyState===1){ws.send(editor.value)}
+  await fetch('/api/new/'+room,{method:'POST'});
   editor.value='';
   if(format==='preview'){preview.innerHTML=''}
   editor.focus();

@@ -1,16 +1,5 @@
-CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  username TEXT UNIQUE NOT NULL,
-  password_hash TEXT NOT NULL,
-  created_at TEXT DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS sessions (
-  token TEXT PRIMARY KEY,
-  user_id INTEGER NOT NULL,
-  expires_at TEXT NOT NULL,
-  FOREIGN KEY (user_id) REFERENCES users(id)
-);
+-- Remove content_hash column, rebuild history table
+DROP TABLE IF EXISTS history;
 
 CREATE TABLE IF NOT EXISTS history (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,4 +14,3 @@ CREATE TABLE IF NOT EXISTS history (
 );
 
 CREATE INDEX IF NOT EXISTS idx_history_room_order ON history(room, pinned DESC, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);

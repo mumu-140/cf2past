@@ -35,6 +35,16 @@ export default {
       return stub.fetch(new Request(doUrl.toString(), request));
     }
 
+    // 新建会话
+    if (path.startsWith('/api/new/') && request.method === 'POST') {
+      const room = path.slice(9) || 'default';
+      const id = env.ROOM.idFromName(room);
+      const stub = env.ROOM.get(id);
+      const doUrl = new URL(request.url);
+      doUrl.searchParams.set('action', 'new');
+      return stub.fetch(new Request(doUrl.toString(), { method: 'POST' }));
+    }
+
     // 历史 API
     if (path.startsWith('/api/history/')) {
       const segments = path.slice(13).split('/');
