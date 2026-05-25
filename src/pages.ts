@@ -105,10 +105,12 @@ header{display:flex;align-items:center;padding:.6rem 1rem;background:var(--surfa
 .item.preserved{border-color:color-mix(in srgb,var(--pv) 30%,transparent)}
 .item-content{font-size:.8rem;color:var(--text);line-height:1.4;max-height:3.6em;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;margin-bottom:.4rem;word-break:break-all;opacity:.85}
 .item-meta{display:flex;align-items:center;gap:.5rem;font-size:.68rem;color:var(--muted)}
-.item-actions{position:absolute;top:.5rem;right:.5rem;display:flex;gap:.2rem;opacity:0;transition:opacity .15s}
+.item-actions{position:absolute;top:.4rem;right:.4rem;display:flex;gap:.35rem;opacity:0;transition:opacity .15s}
 .item:hover .item-actions{opacity:1}
-.act{width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:4px;border:none;background:var(--border);color:var(--muted);cursor:pointer;font-size:.68rem;transition:all .15s}
+@media(pointer:coarse){.item-actions{opacity:1}}
+.act{width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:6px;border:none;background:var(--border);color:var(--muted);cursor:pointer;font-size:.9rem;transition:all .15s;-webkit-tap-highlight-color:transparent}
 .act:hover{background:var(--border2);color:var(--text)}
+.act:active{transform:scale(.9)}
 .act.active{color:var(--pin);background:var(--pin-bg)}
 .act.pv.active{color:var(--pv);background:var(--pv-bg)}
 .badge{display:inline-block;padding:.1rem .35rem;border-radius:3px;font-size:.62rem;font-weight:500}
@@ -216,9 +218,9 @@ async function loadHistory(q=''){
     if(i.preserved)badges.push('<span class="badge badge-pv">保留</span>');
     return '<div class="item'+(i.pinned?' pinned':'')+(i.preserved?' preserved':'')+'" data-id="'+i.id+'">'+
       '<div class="item-actions">'+
-        '<button class="act'+(i.pinned?' active':'')+'" onclick="event.stopPropagation();pin('+i.id+')" title="置顶">&#9650;</button>'+
-        '<button class="act pv'+(i.preserved?' active':'')+'" onclick="event.stopPropagation();preserve('+i.id+')" title="保留">&#9733;</button>'+
-        '<button class="act" onclick="event.stopPropagation();del('+i.id+')" title="删除">&#10005;</button>'+
+        '<button class="act'+(i.pinned?' active':'')+'" onclick="event.stopPropagation();pin('+i.id+')" title="置顶">📌</button>'+
+        '<button class="act pv'+(i.preserved?' active':'')+'" onclick="event.stopPropagation();preserve('+i.id+')" title="保留">⭐</button>'+
+        '<button class="act" onclick="event.stopPropagation();del('+i.id+')" title="删除">🗑</button>'+
       '</div>'+
       '<div class="item-content">'+esc(i.content)+'</div>'+
       '<div class="item-meta"><span>'+timeAgo(i.updated_at)+'</span>'+badges.join('')+'</div>'+
