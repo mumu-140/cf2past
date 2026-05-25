@@ -23,14 +23,13 @@ export async function saveHistory(db: D1Database, room: string, content: string,
 
   const hash = await computeHash(content);
 
-  // 相同 hash 只更新时间戳，不新建记录
   const existing = await db.prepare(
     'SELECT id FROM history WHERE room = ? AND content_hash = ?'
   ).bind(room, hash).first<{ id: number }>();
 
   if (existing) {
     await db.prepare(
-      'UPDATE history SET updated_at = datetime(\'now\'), content = ? WHERE id = ?'
+      "UPDATE history SET updated_at = datetime('now'), content = ? WHERE id = ?"
     ).bind(content, existing.id).run();
     return;
   }
@@ -39,7 +38,6 @@ export async function saveHistory(db: D1Database, room: string, content: string,
     'INSERT INTO history (room, content, content_hash, user_id) VALUES (?, ?, ?, ?)'
   ).bind(room, content, hash, userId).run();
 
-  // 清理：只删除非 preserved 且非 pinned 的旧记录
   const count = await db.prepare(
     'SELECT COUNT(*) as c FROM history WHERE room = ? AND preserved = 0 AND pinned = 0'
   ).bind(room).first<{ c: number }>();
@@ -74,12 +72,12 @@ export async function deleteHistory(db: D1Database, id: number, room: string): P
 
 export async function togglePin(db: D1Database, id: number, room: string): Promise<void> {
   await db.prepare(
-    'UPDATE history SET pinned = CASE WHEN pinned = 0 THEN 1 ELSE 0 END, updated_at = datetime(\'now\') WHERE id = ? AND room = ?'
+    "UPDATE history SET pinned = CASE WHEN pinned = 0 THEN 1 ELSE 0 END, updated_at = datetime('now') WHERE id = ? AND room = ?"
   ).bind(id, room).run();
 }
 
 export async function togglePreserve(db: D1Database, id: number, room: string): Promise<void> {
   await db.prepare(
-    'UPDATE history SET preserved = CASE WHEN preserved = 0 THEN 1 ELSE 0 END WHERE id = ? AND room = ?'
+    "UPDATE history SET preserved = CASE WHEN preserved = 0 THEN 1 ELSE 0 END WHERE id = ? AND room = ?"
   ).bind(id, room).run();
 }
