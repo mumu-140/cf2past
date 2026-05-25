@@ -108,7 +108,8 @@ header{display:flex;align-items:center;padding:.6rem 1rem;background:var(--surfa
 .item-actions{position:absolute;top:.4rem;right:.4rem;display:flex;gap:.35rem;opacity:0;transition:opacity .15s}
 .item:hover .item-actions{opacity:1}
 @media(pointer:coarse){.item-actions{opacity:1}}
-.act{width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:6px;border:1px solid var(--border2);background:var(--surface);color:var(--muted);cursor:pointer;font-size:.7rem;font-weight:700;transition:all .15s;-webkit-tap-highlight-color:transparent;user-select:none;line-height:1}
+.act{position:relative;width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:6px;border:1px solid var(--border2);background:var(--surface);color:var(--muted);cursor:pointer;font-size:.7rem;font-weight:700;transition:all .15s;-webkit-tap-highlight-color:transparent;user-select:none;line-height:1}
+.act::after{content:'';position:absolute;inset:0;z-index:1}
 .act:hover{background:var(--card-hover);color:var(--text);border-color:var(--accent)}
 .act:active{transform:scale(.9)}
 .act.active{color:var(--pin);background:var(--pin-bg);border-color:var(--pin)}
