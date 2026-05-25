@@ -99,18 +99,19 @@ header{display:flex;align-items:center;padding:.6rem 1rem;background:var(--surfa
 .search-box{flex:1;padding:.55rem .85rem;background:var(--bg);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-size:.8rem;outline:none;transition:border-color .15s}
 .search-box:focus{border-color:var(--accent)}
 .list{flex:1;overflow-y:auto;padding:.75rem 1rem}
-.item{position:relative;padding:.75rem 1rem;margin-bottom:.5rem;background:var(--card);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:all .15s}
+.item{position:relative;padding:.85rem 8.75rem .78rem 1rem;min-height:4.25rem;margin-bottom:.5rem;background:var(--card);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:all .15s}
 .item:hover{border-color:var(--border2);background:var(--card-hover)}
 .item.pinned{border-color:color-mix(in srgb,var(--pin) 30%,transparent)}
 .item.preserved{border-color:color-mix(in srgb,var(--pv) 30%,transparent)}
 .item-content{font-size:.8rem;color:var(--text);line-height:1.4;max-height:3.6em;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;margin-bottom:.4rem;word-break:break-all;opacity:.85}
 .item-meta{display:flex;align-items:center;gap:.5rem;font-size:.68rem;color:var(--muted)}
-.item-actions{position:absolute;top:.5rem;right:.5rem;display:flex;gap:.4rem;opacity:0;transition:opacity .15s}
+.item-actions{position:absolute;top:.65rem;right:.75rem;display:flex;gap:.35rem;opacity:0;transition:opacity .15s;z-index:2}
 .item:hover .item-actions{opacity:1}
 @media(pointer:coarse){.item-actions{opacity:1}}
-.act{display:inline-block;padding:.45rem .6rem;border-radius:6px;border:1px solid var(--border2);background:var(--surface);color:var(--muted);cursor:pointer;font-size:.72rem;font-weight:600;transition:all .15s;-webkit-tap-highlight-color:transparent;user-select:none;line-height:1;text-align:center}
+.act{appearance:none;-webkit-appearance:none;width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center;padding:0;border-radius:7px;border:1px solid var(--border2);background:var(--surface);color:var(--muted);cursor:pointer;font-size:.72rem;font-weight:700;transition:background .15s,color .15s,border-color .15s,transform .15s;-webkit-tap-highlight-color:transparent;user-select:none;line-height:1;text-align:center;position:relative;z-index:3}
 .act:hover{background:var(--card-hover);color:var(--text);border-color:var(--accent)}
-.act:active{transform:scale(.92)}
+.act:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.act:active{transform:scale(.94)}
 .act.active{color:var(--pin);background:var(--pin-bg);border-color:var(--pin)}
 .act.pv.active{color:var(--pv);background:var(--pv-bg);border-color:var(--pv)}
 .act.del:hover{color:#ef4444;border-color:#ef4444}
@@ -222,9 +223,9 @@ async function loadHistory(q=''){
     if(i.preserved)badges.push('<span class="badge badge-pv">保留</span>');
     return '<div class="item'+(i.pinned?' pinned':'')+(i.preserved?' preserved':'')+'" data-id="'+i.id+'">'+
       '<div class="item-actions">'+
-        '<button class="act'+(i.pinned?' active':'')+'" onclick="event.stopPropagation();pin('+i.id+')" title="置顶">顶</button>'+
-        '<button class="act pv'+(i.preserved?' active':'')+'" onclick="event.stopPropagation();preserve('+i.id+')" title="保留">留</button>'+
-        '<button class="act del" onclick="event.stopPropagation();del('+i.id+')" title="删除">删</button>'+
+        '<button class="act'+(i.pinned?' active':'')+'" onclick="event.stopPropagation();pin('+i.id+')" title="置顶" aria-label="置顶历史记录">顶</button>'+
+        '<button class="act pv'+(i.preserved?' active':'')+'" onclick="event.stopPropagation();preserve('+i.id+')" title="保留" aria-label="保留历史记录">留</button>'+
+        '<button class="act del" onclick="event.stopPropagation();del('+i.id+')" title="删除" aria-label="删除历史记录">删</button>'+
       '</div>'+
       '<div class="item-content">'+esc(i.content)+'</div>'+
       '<div class="item-meta"><span>'+timeAgo(i.updated_at)+'</span>'+badges.join('')+'</div>'+
