@@ -2,37 +2,53 @@ export interface HistoryItem {
   id: number;
   room: string;
   content: string;
+  content_hash: string;
   user_id: number;
+  pinned: number;
+  preserved: number;
   created_at: string;
+  updated_at: string;
 }
 
 const MAX_HISTORY = 50;
-const MIN_SAVE_INTERVAL_MS = 3000;
-const lastSaveTime: Map<string, number> = new Map();
+
+async function computeHash(content: string): Promise<string> {
+  const data = new TextEncoder().encode(content);
+  const buffer = await crypto.subtle.digest('SHA-256', data);
+  return [...new Uint8Array(buffer)].slice(0, 8).map(b => b.toString(16).padStart(2, '0')).join('');
+}
 
 export async function saveHistory(db: D1Database, room: string, content: string, userId: number): Promise<void> {
   if (!content.trim()) return;
 
-  // 防抖：同一房间 3 秒内不重复写入
-  const key = room;
-  const now = Date.now();
-  const last = lastSaveTime.get(key) || 0;
-  if (now - last < MIN_SAVE_INTERVAL_MS) return;
-  lastSaveTime.set(key, now);
+  const hash = await computeHash(content);
+
+  // 相同 hash 只更新时间戳，不新建记录
+  const existing = await db.prepare(
+    'SELECT id FROM history WHERE room = ? AND content_hash = ?'
+  ).bind(room, hash).first<{ id: number }>();
+
+  if (existing) {
+    await db.prepare(
+      'UPDATE history SET updated_at = datetime(\'now\'), content = ? WHERE id = ?'
+    ).bind(content, existing.id).run();
+    return;
+  }
 
   await db.prepare(
-    'INSERT INTO history (room, content, user_id) VALUES (?, ?, ?)'
-  ).bind(room, content, userId).run();
+    'INSERT INTO history (room, content, content_hash, user_id) VALUES (?, ?, ?, ?)'
+  ).bind(room, content, hash, userId).run();
 
-  // 超出上限时清理旧记录
+  // 清理：只删除非 preserved 且非 pinned 的旧记录
   const count = await db.prepare(
-    'SELECT COUNT(*) as c FROM history WHERE room = ?'
+    'SELECT COUNT(*) as c FROM history WHERE room = ? AND preserved = 0 AND pinned = 0'
   ).bind(room).first<{ c: number }>();
 
   if (count && count.c > MAX_HISTORY) {
     await db.prepare(
       `DELETE FROM history WHERE id IN (
-        SELECT id FROM history WHERE room = ? ORDER BY created_at ASC LIMIT ?
+        SELECT id FROM history WHERE room = ? AND preserved = 0 AND pinned = 0
+        ORDER BY updated_at ASC LIMIT ?
       )`
     ).bind(room, count.c - MAX_HISTORY).run();
   }
@@ -41,13 +57,29 @@ export async function saveHistory(db: D1Database, room: string, content: string,
 export async function getHistory(db: D1Database, room: string, query: string): Promise<HistoryItem[]> {
   if (query) {
     return (await db.prepare(
-      `SELECT id, room, content, user_id, created_at FROM history
-       WHERE room = ? AND content LIKE ? ORDER BY created_at DESC LIMIT ?`
-    ).bind(room, `%${query}%`, MAX_HISTORY).all<HistoryItem>()).results;
+      `SELECT * FROM history WHERE room = ? AND content LIKE ?
+       ORDER BY pinned DESC, updated_at DESC LIMIT 100`
+    ).bind(room, `%${query}%`).all<HistoryItem>()).results;
   }
 
   return (await db.prepare(
-    `SELECT id, room, content, user_id, created_at FROM history
-     WHERE room = ? ORDER BY created_at DESC LIMIT ?`
-  ).bind(room, MAX_HISTORY).all<HistoryItem>()).results;
+    `SELECT * FROM history WHERE room = ?
+     ORDER BY pinned DESC, updated_at DESC LIMIT 100`
+  ).bind(room).all<HistoryItem>()).results;
+}
+
+export async function deleteHistory(db: D1Database, id: number, room: string): Promise<void> {
+  await db.prepare('DELETE FROM history WHERE id = ? AND room = ?').bind(id, room).run();
+}
+
+export async function togglePin(db: D1Database, id: number, room: string): Promise<void> {
+  await db.prepare(
+    'UPDATE history SET pinned = CASE WHEN pinned = 0 THEN 1 ELSE 0 END, updated_at = datetime(\'now\') WHERE id = ? AND room = ?'
+  ).bind(id, room).run();
+}
+
+export async function togglePreserve(db: D1Database, id: number, room: string): Promise<void> {
+  await db.prepare(
+    'UPDATE history SET preserved = CASE WHEN preserved = 0 THEN 1 ELSE 0 END WHERE id = ? AND room = ?'
+  ).bind(id, room).run();
 }

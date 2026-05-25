@@ -1,6 +1,6 @@
 import { handleAuth, validateSession } from './auth';
 import { Room } from './room';
-import { getHistory } from './db';
+import { getHistory, deleteHistory, togglePin, togglePreserve } from './db';
 import { loginPage, setupPage, mainPage } from './pages';
 
 export { Room };
@@ -15,12 +15,10 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // 静态认证路由（不需要 session）
     if (path === '/login' || path === '/setup') {
       return handleAuth(request, env, path);
     }
 
-    // 其余路由需要认证
     const user = await validateSession(request, env);
     if (!user) {
       return Response.redirect(new URL('/login', url.origin).toString(), 302);
@@ -39,7 +37,25 @@ export default {
 
     // 历史 API
     if (path.startsWith('/api/history/')) {
-      const room = path.slice(13) || 'default';
+      const segments = path.slice(13).split('/');
+      const room = segments[0] || 'default';
+
+      // DELETE /api/history/:room/:id
+      if (request.method === 'DELETE' && segments[1]) {
+        await deleteHistory(env.DB, parseInt(segments[1]), room);
+        return Response.json({ ok: true });
+      }
+
+      // PATCH /api/history/:room/:id
+      if (request.method === 'PATCH' && segments[1]) {
+        const body = await request.json<{ action: string }>();
+        const id = parseInt(segments[1]);
+        if (body.action === 'pin') await togglePin(env.DB, id, room);
+        if (body.action === 'preserve') await togglePreserve(env.DB, id, room);
+        return Response.json({ ok: true });
+      }
+
+      // GET /api/history/:room
       const query = url.searchParams.get('q') || '';
       const items = await getHistory(env.DB, room, query);
       return Response.json(items);
