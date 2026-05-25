@@ -105,16 +105,15 @@ header{display:flex;align-items:center;padding:.6rem 1rem;background:var(--surfa
 .item.preserved{border-color:color-mix(in srgb,var(--pv) 30%,transparent)}
 .item-content{font-size:.8rem;color:var(--text);line-height:1.4;max-height:3.6em;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;margin-bottom:.4rem;word-break:break-all;opacity:.85}
 .item-meta{display:flex;align-items:center;gap:.5rem;font-size:.68rem;color:var(--muted)}
-.item-actions{position:absolute;top:.4rem;right:.4rem;display:flex;gap:.35rem;opacity:0;transition:opacity .15s}
+.item-actions{position:absolute;top:.5rem;right:.5rem;display:flex;gap:.4rem;opacity:0;transition:opacity .15s}
 .item:hover .item-actions{opacity:1}
 @media(pointer:coarse){.item-actions{opacity:1}}
-.act{position:relative;width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:6px;border:1px solid var(--border2);background:var(--surface);color:var(--muted);cursor:pointer;font-size:.7rem;font-weight:700;transition:all .15s;-webkit-tap-highlight-color:transparent;user-select:none;line-height:1}
-.act::after{content:'';position:absolute;inset:0;z-index:1}
+.act{display:inline-block;padding:.45rem .6rem;border-radius:6px;border:1px solid var(--border2);background:var(--surface);color:var(--muted);cursor:pointer;font-size:.72rem;font-weight:600;transition:all .15s;-webkit-tap-highlight-color:transparent;user-select:none;line-height:1;text-align:center}
 .act:hover{background:var(--card-hover);color:var(--text);border-color:var(--accent)}
-.act:active{transform:scale(.9)}
+.act:active{transform:scale(.92)}
 .act.active{color:var(--pin);background:var(--pin-bg);border-color:var(--pin)}
 .act.pv.active{color:var(--pv);background:var(--pv-bg);border-color:var(--pv)}
-.act svg{width:16px;height:16px;pointer-events:none}
+.act.del:hover{color:#ef4444;border-color:#ef4444}
 .badge{display:inline-block;padding:.1rem .35rem;border-radius:3px;font-size:.62rem;font-weight:500}
 .badge-pin{background:var(--pin-bg);color:var(--pin)}
 .badge-pv{background:var(--pv-bg);color:var(--pv)}
@@ -148,7 +147,7 @@ header{display:flex;align-items:center;padding:.6rem 1rem;background:var(--surfa
 </div>
 <script>
 const room='${room}',editor=document.getElementById('editor'),dot=document.getElementById('dot'),preview=document.getElementById('preview');
-let ws,timer,remote=false,format=localStorage.getItem('format')||'md';
+let ws,timer,remote=false,format=localStorage.getItem('format')||'md',remoteTimer;
 
 // Theme
 function toggleTheme(){
@@ -178,15 +177,17 @@ setFormat(format);
 function connect(){
   const p=location.protocol==='https:'?'wss:':'ws:';
   ws=new WebSocket(p+'//'+location.host+'/api/ws/'+room);
-  ws.onopen=()=>dot.classList.add('on');
-  ws.onclose=()=>{dot.classList.remove('on');setTimeout(connect,2000)};
+  ws.onopen=()=>{dot.classList.add('on');remote=false};
+  ws.onclose=()=>{dot.classList.remove('on');remote=false;setTimeout(connect,2000)};
+  ws.onerror=()=>{remote=false};
   ws.onmessage=e=>{
     remote=true;
+    clearTimeout(remoteTimer);
     const s=editor.selectionStart;
     editor.value=e.data;
     editor.selectionStart=editor.selectionEnd=Math.min(s,e.data.length);
     if(format==='preview')preview.innerHTML=marked.parse(e.data||'');
-    remote=false;
+    remoteTimer=setTimeout(()=>{remote=false},50);
   };
 }
 
@@ -220,9 +221,9 @@ async function loadHistory(q=''){
     if(i.preserved)badges.push('<span class="badge badge-pv">保留</span>');
     return '<div class="item'+(i.pinned?' pinned':'')+(i.preserved?' preserved':'')+'" data-id="'+i.id+'">'+
       '<div class="item-actions">'+
-        '<button class="act'+(i.pinned?' active':'')+'" onclick="event.stopPropagation();pin('+i.id+')" title="置顶"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2v14M12 2l5 5M12 2L7 7"/><path d="M5 22h14"/></svg></button>'+
-        '<button class="act pv'+(i.preserved?' active':'')+'" onclick="event.stopPropagation();preserve('+i.id+')" title="保留"><svg viewBox="0 0 24 24" fill="'+(i.preserved?'currentColor':'none')+'" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></button>'+
-        '<button class="act" onclick="event.stopPropagation();del('+i.id+')" title="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg></button>'+
+        '<button class="act'+(i.pinned?' active':'')+'" onclick="event.stopPropagation();pin('+i.id+')" title="置顶">顶</button>'+
+        '<button class="act pv'+(i.preserved?' active':'')+'" onclick="event.stopPropagation();preserve('+i.id+')" title="保留">留</button>'+
+        '<button class="act del" onclick="event.stopPropagation();del('+i.id+')" title="删除">删</button>'+
       '</div>'+
       '<div class="item-content">'+esc(i.content)+'</div>'+
       '<div class="item-meta"><span>'+timeAgo(i.updated_at)+'</span>'+badges.join('')+'</div>'+
