@@ -1,0 +1,18 @@
+{
+  "name": "cf2past",
+  "version": "1.0.0",
+  "description": "Real-time cross-device clipboard on Cloudflare Workers",
+  "private": true,
+  "license": "MIT",
+  "keywords": ["clipboard", "realtime", "cloudflare-workers", "websocket", "sync"],
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:init": "wrangler d1 execute cf2past-db --file=schema.sql"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241205.0",
+    "typescript": "^5.7.0",
+    "wrangler": "^3.99.0"
+  }
+}

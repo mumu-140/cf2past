@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.wrangler/
+.helloagents/
+.codegraph/
+.dev.vars
+.env
+*.local
