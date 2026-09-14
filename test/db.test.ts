@@ -1,6 +1,13 @@
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
-import { deleteHistory, getHistory, saveHistory } from '../src/db';
+import {
+  deleteHistory,
+  getHistory,
+  getHistoryItem,
+  saveHistory,
+  togglePin,
+  togglePreserve,
+} from '../src/db';
 
 async function createUser(name: string): Promise<number> {
   const result = await env.DB.prepare(
@@ -36,5 +43,23 @@ describe('history persistence', () => {
 
   it('reports whether delete changed a row', async () => {
     expect(await deleteHistory(env.DB, 999999, 'room')).toBe(false);
+  });
+
+  it('looks up a history item only inside its canonical room', async () => {
+    const userId = await createUser('lookup-user');
+    const id = await saveHistory(env.DB, 'room-a', 'snapshot', userId, null);
+
+    expect((await getHistoryItem(env.DB, id, 'room-a'))?.content).toBe('snapshot');
+    expect(await getHistoryItem(env.DB, id, 'room-b')).toBeNull();
+  });
+
+  it('reports whether pin and preserve mutations changed a row', async () => {
+    const userId = await createUser('mutation-user');
+    const id = await saveHistory(env.DB, 'room', 'snapshot', userId, null);
+
+    expect(await togglePin(env.DB, id, 'room')).toBe(true);
+    expect(await togglePreserve(env.DB, id, 'room')).toBe(true);
+    expect(await togglePin(env.DB, 999999, 'room')).toBe(false);
+    expect(await togglePreserve(env.DB, 999999, 'room')).toBe(false);
   });
 });
