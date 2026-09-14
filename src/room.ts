@@ -191,6 +191,7 @@ export class Room implements DurableObject {
     } catch (error) {
       console.error('Failed to persist room history from alarm', error);
       await this.schedulePersistence(RETRY_DELAY_MS);
+      throw error;
     }
   }
 
