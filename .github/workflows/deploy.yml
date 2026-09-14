@@ -19,9 +19,9 @@ jobs:
           node-version: '22'
           cache: npm
 
-      # Bootstrap while the hardening branch regenerates package-lock.json.
-      # This is changed back to npm ci before merge.
-      - run: npm install
+      # Diagnostic bootstrap: ignore the pre-hardening lockfile so the
+      # regression suite can reach RED. A fresh lock is committed before merge.
+      - run: npm install --package-lock=false
 
       - run: npm test
 
@@ -31,13 +31,6 @@ jobs:
         run: sed "s/YOUR_D1_DATABASE_ID/00000000-0000-0000-0000-000000000001/" wrangler.example.toml > wrangler.toml
 
       - run: npm run dry-run
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: hardening-package-lock
-          path: package-lock.json
-          if-no-files-found: ignore
 
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
