@@ -97,6 +97,20 @@ describe('authentication migration', () => {
     expect(legacy).toEqual({ id: userId, username: 'cookie-user' });
   });
 
+  it('rejects an expired ISO-8601 session on the current UTC date', async () => {
+    const userId = await insertUser('expired-iso-user');
+    const date = new Date().toISOString().slice(0, 10);
+    await env.DB.prepare(
+      'INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)'
+    ).bind('expired-iso-token', userId, `${date}T00:00:00.000Z`).run();
+
+    const session = await validateSession(new Request('https://clip.example/', {
+      headers: { Cookie: '__Host-cf2past_session=expired-iso-token' },
+    }), env);
+
+    expect(session).toBeNull();
+  });
+
   it('logout deletes the active session and expires both cookie names', async () => {
     const userId = await insertUser('logout-user');
     await insertSession('logout-token', userId);
@@ -115,6 +129,24 @@ describe('authentication migration', () => {
     expect(cookie).toContain('__Host-cf2past_session=');
     expect(cookie).toContain('session=');
     expect(cookie).toContain('Max-Age=0');
+  });
+
+  it('logout deletes both server sessions when new and legacy cookies coexist', async () => {
+    const userId = await insertUser('dual-cookie-user');
+    await insertSession('dual-new-token', userId);
+    await insertSession('dual-legacy-token', userId);
+
+    await logout(new Request('https://clip.example/logout', {
+      method: 'POST',
+      headers: {
+        Cookie: '__Host-cf2past_session=dual-new-token; session=dual-legacy-token',
+      },
+    }), env);
+
+    const remaining = await env.DB.prepare(
+      'SELECT COUNT(*) AS c FROM sessions WHERE token IN (?, ?)'
+    ).bind('dual-new-token', 'dual-legacy-token').first<{ c: number }>();
+    expect(remaining?.c).toBe(0);
   });
 
   it('opportunistically removes expired sessions after a successful login', async () => {
