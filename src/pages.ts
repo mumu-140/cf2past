@@ -191,6 +191,7 @@ editor.addEventListener('input',function(){
 });
 
 async function newSession(){
+  if(sendTimer!==null){clearTimeout(sendTimer);sendTimer=null;}
   const response=await fetch('/api/new/'+roomPath,{
     method:'POST',
     headers:{'Content-Type':'application/json'},
