@@ -21,7 +21,11 @@ async function edit(stub: DurableObjectStub, userId: number, room: string, conte
     const sockets = Object.values(pair);
     const server = sockets[1];
     state.acceptWebSocket(server, [`uid:${userId}`, `room:${room}`]);
-    await instance.webSocketMessage(server, content);
+    try {
+      await instance.webSocketMessage(server, content);
+    } finally {
+      await instance.webSocketClose(server);
+    }
   });
 }
 
@@ -166,7 +170,10 @@ describe('Room Durable Object', () => {
     });
     socket.accept();
 
-    await expect(message).resolves.toBe('');
-    socket.close();
+    try {
+      await expect(message).resolves.toBe('');
+    } finally {
+      socket.close();
+    }
   });
 });
