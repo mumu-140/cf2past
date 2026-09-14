@@ -21,7 +21,6 @@ export function escapeLike(value: string): string {
 export async function saveHistory(db: D1Database, room: string, content: string, userId: number, entryId: number | null): Promise<number> {
   if (!content.trim()) return entryId || 0;
 
-  // 有 entryId → 尝试 UPDATE 当前条目。条目可能已被其他请求删除。
   if (entryId) {
     const result = await db.prepare(
       "UPDATE history SET content = ?, updated_at = datetime('now') WHERE id = ? AND room = ?"
@@ -32,14 +31,12 @@ export async function saveHistory(db: D1Database, room: string, content: string,
     }
   }
 
-  // 无 entryId，或旧 entryId 已失效 → INSERT 新条目
   const result = await db.prepare(
     'INSERT INTO history (room, content, user_id) VALUES (?, ?, ?)'
   ).bind(room, content, userId).run();
 
   const newId = result.meta.last_row_id as number;
 
-  // 清理超出上限的旧记录（不清理 pinned/preserved）
   const count = await db.prepare(
     'SELECT COUNT(*) as c FROM history WHERE room = ? AND preserved = 0 AND pinned = 0'
   ).bind(room).first<{ c: number }>();
@@ -70,19 +67,27 @@ export async function getHistory(db: D1Database, room: string, query: string): P
   ).bind(room).all<HistoryItem>()).results;
 }
 
+export async function getHistoryItem(db: D1Database, id: number, room: string): Promise<HistoryItem | null> {
+  return await db.prepare(
+    'SELECT * FROM history WHERE id = ? AND room = ?'
+  ).bind(id, room).first<HistoryItem>();
+}
+
 export async function deleteHistory(db: D1Database, id: number, room: string): Promise<boolean> {
   const result = await db.prepare('DELETE FROM history WHERE id = ? AND room = ?').bind(id, room).run();
   return (result.meta.changes ?? 0) > 0;
 }
 
-export async function togglePin(db: D1Database, id: number, room: string): Promise<void> {
-  await db.prepare(
+export async function togglePin(db: D1Database, id: number, room: string): Promise<boolean> {
+  const result = await db.prepare(
     "UPDATE history SET pinned = CASE WHEN pinned = 0 THEN 1 ELSE 0 END, updated_at = datetime('now') WHERE id = ? AND room = ?"
   ).bind(id, room).run();
+  return (result.meta.changes ?? 0) > 0;
 }
 
-export async function togglePreserve(db: D1Database, id: number, room: string): Promise<void> {
-  await db.prepare(
+export async function togglePreserve(db: D1Database, id: number, room: string): Promise<boolean> {
+  const result = await db.prepare(
     "UPDATE history SET preserved = CASE WHEN preserved = 0 THEN 1 ELSE 0 END WHERE id = ? AND room = ?"
   ).bind(id, room).run();
+  return (result.meta.changes ?? 0) > 0;
 }
