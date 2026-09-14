@@ -55,6 +55,20 @@ describe('Room Durable Object', () => {
     expect(state.dirty).toBe(false);
   });
 
+  it('keeps dirty state and propagates alarm persistence failures', async () => {
+    const userId = await createUser('alarm-failure-user');
+    const stub = roomStub('alarm-failure');
+
+    expect(await edit(stub, userId, 'work', 'must retry')).toBe(true);
+    await env.DB.exec('DROP TABLE history');
+
+    await expect(
+      runInDurableObject(stub, async (instance: Room) => instance.alarm())
+    ).rejects.toThrow();
+
+    expect((await storedState(stub)).dirty).toBe(true);
+  });
+
   it('recovers a stale active history id on the next alarm', async () => {
     const userId = await createUser('stale-do-user');
     const stub = roomStub('stale');
