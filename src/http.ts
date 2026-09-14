@@ -9,3 +9,28 @@ export function isSameOrigin(request: Request): boolean {
   if (!origin) return false;
   return origin === new URL(request.url).origin;
 }
+
+export function createNonce(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(18));
+  return btoa(String.fromCharCode(...bytes));
+}
+
+export function securityHeaders(nonce: string): Headers {
+  return new Headers({
+    'Content-Security-Policy': [
+      "default-src 'none'",
+      `script-src 'nonce-${nonce}' https://cdn.jsdelivr.net`,
+      "style-src 'unsafe-inline'",
+      "img-src 'self' data: https:",
+      "connect-src 'self' ws: wss:",
+      "form-action 'self'",
+      "base-uri 'none'",
+      "object-src 'none'",
+      "frame-ancestors 'none'",
+    ].join('; '),
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'no-referrer',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+  });
+}
