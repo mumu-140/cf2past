@@ -24,8 +24,12 @@ function getCookie(request: Request, name: string): string | null {
   return null;
 }
 
-function getSessionToken(request: Request): string | null {
-  return getCookie(request, SESSION_COOKIE) ?? getCookie(request, LEGACY_SESSION_COOKIE);
+function getSessionTokens(request: Request): string[] {
+  const tokens = [
+    getCookie(request, SESSION_COOKIE),
+    getCookie(request, LEGACY_SESSION_COOKIE),
+  ].filter((token): token is string => token !== null);
+  return [...new Set(tokens)];
 }
 
 function sessionCookie(token: string): string {
@@ -46,7 +50,7 @@ function htmlResponse(page: string, nonce: string, status = 200): Response {
 async function cleanupExpiredSessions(env: Env): Promise<void> {
   try {
     await env.DB.prepare(
-      "DELETE FROM sessions WHERE expires_at <= datetime('now')"
+      "DELETE FROM sessions WHERE datetime(expires_at) <= datetime('now')"
     ).run();
   } catch (error) {
     console.error('Failed to clean expired sessions', error);
@@ -54,15 +58,16 @@ async function cleanupExpiredSessions(env: Env): Promise<void> {
 }
 
 export async function validateSession(request: Request, env: Env): Promise<User | null> {
-  const token = getSessionToken(request);
-  if (!token) return null;
+  for (const token of getSessionTokens(request)) {
+    const row = await env.DB.prepare(
+      `SELECT u.id, u.username FROM sessions s JOIN users u ON s.user_id = u.id
+       WHERE s.token = ? AND datetime(s.expires_at) > datetime('now')`
+    ).bind(token).first<{ id: number; username: string }>();
 
-  const row = await env.DB.prepare(
-    `SELECT u.id, u.username FROM sessions s JOIN users u ON s.user_id = u.id
-     WHERE s.token = ? AND s.expires_at > datetime('now')`
-  ).bind(token).first<{ id: number; username: string }>();
+    if (row) return { id: row.id, username: row.username };
+  }
 
-  return row ? { id: row.id, username: row.username } : null;
+  return null;
 }
 
 async function createSession(userId: number, env: Env): Promise<string> {
@@ -76,8 +81,7 @@ async function createSession(userId: number, env: Env): Promise<string> {
 }
 
 export async function logout(request: Request, env: Env): Promise<Response> {
-  const token = getSessionToken(request);
-  if (token) {
+  for (const token of getSessionTokens(request)) {
     await env.DB.prepare('DELETE FROM sessions WHERE token = ?').bind(token).run();
   }
 
