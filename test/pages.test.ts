@@ -68,4 +68,18 @@ describe('page security', () => {
     expect(setup).toContain('minlength="8"');
     expect(setup).toContain('至少8位');
   });
+
+  it('cancels a pending debounced WebSocket edit before atomic New', () => {
+    const html = renderMain('default', 'test-nonce');
+    const start = html.indexOf('async function newSession()');
+    const end = html.indexOf('\nfunction setPanel', start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+
+    const source = html.slice(start, end);
+    const cancel = source.indexOf('if(sendTimer!==null){clearTimeout(sendTimer);sendTimer=null;}');
+    const request = source.indexOf("fetch('/api/new/'+roomPath");
+    expect(cancel).toBeGreaterThanOrEqual(0);
+    expect(request).toBeGreaterThan(cancel);
+  });
 });
