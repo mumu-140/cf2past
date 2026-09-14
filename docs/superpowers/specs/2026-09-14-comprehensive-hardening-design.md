@@ -31,7 +31,7 @@ A room is exactly one decoded URL path segment. `/` maps to `default`; `/work` m
 
 Room names are normalized once at the Worker boundary, length-limited to 64 Unicode code points, and passed to frontend/API/DO paths using proper URL encoding. The same canonical room string must be used by WebSocket, new-session, history-list, history-mutation, and rendering code.
 
-This removes the current mismatch where live state can use `lab/test` while history APIs treat only `lab` as the room.
+Invalid or nested page paths return 404. Malformed API room parameters return 400.
 
 ## 5. Durable Object state model
 
@@ -53,7 +53,7 @@ D1 history writes are coalesced with a Durable Object alarm rather than executed
 
 `saveHistory` must not trust a stored entry ID blindly. If an UPDATE for `currentEntryId` affects zero rows, the record is considered stale or externally deleted; the function inserts a new history row and returns the new ID. The DO replaces its stored entry ID with that value.
 
-This directly fixes the failure mode where deleting the active history record causes all subsequent edits to update a nonexistent row forever.
+A failed alarm persistence attempt keeps the room dirty and throws from the alarm handler so Durable Object alarm retry semantics can retry the flush. The failure must not advance or clear the active entry identity.
 
 ## 7. New-session semantics
 
@@ -73,9 +73,9 @@ All devices therefore enter the same blank session immediately.
 
 Restoring an old history item loads its content into the live room but starts a new editing session. The restored historical row is not reused as the active row and is therefore not silently modified by later typing.
 
-This keeps history records understandable: restore means “use this as the starting content now,” not “resume mutating the old record.”
+Restore is handled through the Durable Object so all connected devices converge on the restored text.
 
-## 9. Markdown security
+## 9. Markdown and browser security
 
 Markdown preview treats clipboard content as untrusted input.
 
@@ -83,17 +83,19 @@ Rendering flow is:
 
 `text -> Marked -> DOMPurify -> DOM`
 
-The application must never assign unsanitized Marked output to `innerHTML`. Sanitization must remove executable elements, event-handler attributes, dangerous URL schemes, and other active content.
+The application must never assign unsanitized Marked output to `innerHTML`. Sanitization removes executable elements, event-handler attributes, dangerous URL schemes, and other active content.
 
-The page receives a Content Security Policy and standard defensive response headers. Third-party scripts must be version-pinned; bundling them locally is preferred if practical without materially increasing project complexity.
+Marked and DOMPurify are loaded as exact-version browser dependencies with Subresource Integrity. They are permitted explicitly by CSP rather than through a broad wildcard source. If implementation can bundle them locally without adding a frontend build subsystem, local bundling is preferred; otherwise exact-version CDN + SRI is the accepted design.
 
-## 10. Request security
+The current inline `onclick` handlers are removed. Browser behavior is wired with `addEventListener`. The application script receives a per-response CSP nonce; no `unsafe-inline` policy is permitted for scripts.
 
-Authenticated state-changing endpoints require same-origin requests. Origin validation applies to New, history mutation, logout, and WebSocket upgrade where the browser supplies an Origin header.
+Responses include a nonce-based Content Security Policy plus `X-Content-Type-Options: nosniff`, frame protection, a restrictive referrer policy, and a minimal permissions policy.
 
-Responses add appropriate headers including CSP, `X-Content-Type-Options: nosniff`, frame protection, a restrictive referrer policy, and a minimal permissions policy.
+## 10. Request security and limits
 
-Clipboard content is capped at 1 MiB per room update to prevent accidental or abusive large-message amplification through WebSocket, Durable Object storage, D1, and browser rendering.
+Authenticated state-changing endpoints require same-origin requests. Origin validation applies to New, history restore/mutation, logout, and WebSocket upgrade when the browser supplies an Origin header.
+
+Clipboard content is capped at 1 MiB per room update. Oversized messages are rejected before changing live state, Durable Object storage, D1, or broadcast state.
 
 ## 11. Authentication and sessions
 
@@ -101,27 +103,27 @@ New passwords require at least 8 characters.
 
 Password hashes use a versioned PBKDF2 representation so iteration count is explicit. New hashes use PBKDF2-SHA256 with 600,000 iterations. Existing unversioned 100,000-iteration hashes remain valid; after a successful login they are transparently rehashed at the new strength.
 
-Sessions use an HttpOnly, Secure, SameSite=Strict `__Host-` cookie. Existing session-cookie compatibility may be accepted temporarily during upgrade so currently logged-in deployments do not fail abruptly.
+New sessions use an HttpOnly, Secure, SameSite=Strict `__Host-` cookie. The server may read the legacy `session` cookie only for compatibility with sessions issued before this release. New logins never issue the legacy cookie. Because old sessions already expire after seven days, legacy-cookie compatibility naturally disappears as those sessions expire. Logout clears both cookie names and deletes the active server-side session where present.
 
-A logout route deletes or invalidates the current server-side session and expires relevant cookies. Opportunistic cleanup removes expired D1 session rows without making cleanup a critical-path failure.
+Expired D1 session cleanup is opportunistic and non-fatal to request handling.
 
 ## 12. History queries
 
-History search remains D1 `LIKE`, but user query text escapes `%`, `_`, and the escape character so searches behave as literal substring searches rather than exposing accidental wildcard semantics.
+History search remains D1 `LIKE`, but user query text escapes `%`, `_`, and the escape character so searches behave as literal substring searches rather than wildcard expressions.
 
 Pinned and preserved behavior remains unchanged. Ordinary-history retention remains capped at the current configured limit.
 
-## 13. Error handling
+## 13. Client and error handling
 
-Invalid room paths return a deterministic 400 or 404 response rather than being silently normalized into a different room.
+Invalid room paths are not silently normalized. Invalid history IDs/actions return 400 or 404 according to whether input is malformed or the target does not exist.
 
-Oversized WebSocket messages are rejected and do not change live or persisted state. Invalid history IDs/actions return explicit client errors. D1 persistence failures must not corrupt DO session identity; a failed flush remains retryable on the next persistence opportunity.
+D1 persistence failures do not corrupt Durable Object session identity. A failed flush remains retryable.
 
-Client reconnect logic must not create reconnect storms and must treat the server's first post-connect message as authoritative, including an empty string.
+Client reconnect uses bounded exponential backoff with jitter and resets after a successful connection. The server's first post-connect message is authoritative, including an empty string.
 
 ## 14. Engineering structure
 
-Targeted extraction is allowed where it improves testability, especially for:
+Targeted extraction is expected where it improves testability, especially for:
 
 - room parsing/canonicalization,
 - HTTP security headers and same-origin checks,
@@ -130,13 +132,15 @@ Targeted extraction is allowed where it improves testability, especially for:
 
 Large unrelated refactors are excluded. `pages.ts` may be reorganized only as needed to make frontend security and script logic auditable.
 
-## 15. Toolchain and CI
+## 15. Toolchain, tests, and CI
 
 Upgrade to Wrangler 4 and current compatible Cloudflare Workers types and TypeScript. Advance the Workers compatibility date to a tested 2026 date.
 
+Use Vitest with Cloudflare's current `@cloudflare/vitest-plugin` so Worker, D1, and Durable Object behavior can be exercised inside the Workers runtime. Use Wrangler's integration test harness only where a full built-Worker HTTP flow provides material additional coverage.
+
 CI separates verification from deployment:
 
-- Pull requests and pushes run `npm ci`, TypeScript checks, and `wrangler deploy --dry-run`.
+- Pull requests and pushes run `npm ci`, tests, TypeScript checks, and `wrangler deploy --dry-run`.
 - Deployment runs only for `main` after verification succeeds.
 
 Dependency automation may be added for npm and GitHub Actions.
@@ -145,11 +149,11 @@ Dependency automation may be added for npm and GitHub Actions.
 
 The preferred implementation requires no D1 schema migration. Existing `users`, `sessions`, and `history` rows remain usable.
 
-If implementation discovers a schema change is unavoidable, that is a design change and must be called out before merging rather than being hidden inside the hardening PR.
+If implementation discovers a schema change is unavoidable, that is a design change and must be called out before merging rather than hidden inside the hardening PR.
 
-## 17. Testing strategy
+## 17. Required regression coverage
 
-The implementation must cover at least these regression cases:
+The test suite must cover at least:
 
 1. Deleting the active history row, then typing again, creates a replacement row instead of losing history updates.
 2. New clears every connected device and a newly connected device receives the empty state.
@@ -160,9 +164,11 @@ The implementation must cover at least these regression cases:
 7. Unicode room names work consistently; nested path ambiguity is rejected.
 8. `%` and `_` in history search are treated literally.
 9. Legacy password hashes still authenticate and are upgraded after successful login.
-10. Oversized content is rejected without changing current state.
-11. TypeScript strict checks pass.
-12. Wrangler dry-run passes under the upgraded toolchain.
+10. Legacy session cookies remain valid only for their existing lifetime; new sessions use only the new cookie.
+11. Oversized content is rejected without changing current state.
+12. Same-origin enforcement rejects cross-origin state changes.
+13. TypeScript strict checks pass.
+14. Wrangler dry-run passes under the upgraded toolchain.
 
 ## 18. Acceptance criteria
 
@@ -172,8 +178,9 @@ The hardening release is acceptable when:
 - two-device realtime behavior is deterministic for edit, New, reconnect, and restore,
 - stale history IDs no longer cause silent persistence loss,
 - Markdown preview cannot execute unsanitized active content,
+- CSP does not require `unsafe-inline` for scripts,
 - room identity is consistent across all APIs,
-- legacy accounts remain usable while new password hashing is stronger,
+- legacy accounts and still-valid legacy sessions remain usable during migration,
 - PR verification runs before deployment,
 - README and security documentation describe the actual behavior and upgrade path,
 - no frontend framework or additional state service is introduced.
