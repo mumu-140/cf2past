@@ -70,7 +70,7 @@ This path is best if you want to deploy from your own computer.
 You need:
 
 - A Cloudflare account.
-- Node.js 20 or newer.
+- Node.js 22 or newer.
 - npm.
 - Wrangler, installed through this project with `npm install`.
 

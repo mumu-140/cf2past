@@ -70,7 +70,7 @@ Worker 负责登录、路由、页面和历史记录 API。每个房间对应一
 你需要：
 
 - 一个 Cloudflare 账号。
-- Node.js 20 或更新版本。
+- Node.js 22 或更新版本。
 - npm。
 - Wrangler。本项目会通过 `npm install` 安装本地 Wrangler。
 
