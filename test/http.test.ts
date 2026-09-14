@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { isSameOrigin, MAX_CONTENT_BYTES, utf8Size } from '../src/http';
+import {
+  createNonce,
+  isSameOrigin,
+  MAX_CONTENT_BYTES,
+  securityHeaders,
+  utf8Size,
+} from '../src/http';
 
 describe('request security helpers', () => {
   it('accepts a matching Origin', () => {
@@ -28,5 +34,29 @@ describe('request security helpers', () => {
 
   it('defines the content limit as exactly 1 MiB', () => {
     expect(MAX_CONTENT_BYTES).toBe(1024 * 1024);
+  });
+
+  it('creates a fresh 18-byte base64 nonce', () => {
+    const first = createNonce();
+    const second = createNonce();
+    expect(first).toMatch(/^[A-Za-z0-9+/]{24}$/);
+    expect(second).toMatch(/^[A-Za-z0-9+/]{24}$/);
+    expect(second).not.toBe(first);
+  });
+
+  it('builds a nonce-bound restrictive CSP and defensive headers', () => {
+    const headers = securityHeaders('test-nonce');
+    const csp = headers.get('Content-Security-Policy') ?? '';
+    const scriptPolicy = csp.split(';').find(part => part.trim().startsWith('script-src')) ?? '';
+
+    expect(scriptPolicy).toContain("'nonce-test-nonce'");
+    expect(scriptPolicy).toContain('https://cdn.jsdelivr.net');
+    expect(scriptPolicy).not.toContain("'unsafe-inline'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("object-src 'none'");
+    expect(headers.get('X-Content-Type-Options')).toBe('nosniff');
+    expect(headers.get('X-Frame-Options')).toBe('DENY');
+    expect(headers.get('Referrer-Policy')).toBe('no-referrer');
+    expect(headers.get('Permissions-Policy')).toBe('camera=(), microphone=(), geolocation=()');
   });
 });
