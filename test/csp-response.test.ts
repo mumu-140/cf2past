@@ -35,6 +35,10 @@ it('binds the authenticated page HTML to its CSP nonce', async () => {
 });
 
 it('binds the login page HTML to its CSP nonce', async () => {
+  await env.DB.prepare(
+    'INSERT INTO users (username, password_hash) VALUES (?, ?)'
+  ).bind('login-csp-user', 'unused').run();
+
   const response = await handleAuth(new Request('https://clip.example/login'), env, '/login');
   const html = await response.text();
   const nonce = nonceFromCsp(response);
