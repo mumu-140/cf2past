@@ -6,43 +6,9 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  patch-new-timer:
-    if: github.event_name == 'pull_request' && github.head_ref == 'codex/comprehensive-hardening'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
-
-      - name: Cancel pending edit before atomic New
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path('src/pages.ts')
-          text = path.read_text()
-          old = """async function newSession(){
-            const response=await fetch('/api/new/'+roomPath,{"""
-          new = """async function newSession(){
-            if(sendTimer!==null){clearTimeout(sendTimer);sendTimer=null;}
-            const response=await fetch('/api/new/'+roomPath,{"""
-          if new in text:
-              raise SystemExit(0)
-          if text.count(old) != 1:
-              raise SystemExit('expected New function marker exactly once')
-          path.write_text(text.replace(old, new, 1))
-          PY
-          if git diff --quiet -- src/pages.ts; then
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/pages.ts
-          git commit -m "fix: cancel pending edit before New"
-          git push origin HEAD:${{ github.head_ref }}
-
   verify:
     runs-on: ubuntu-latest
     steps:
