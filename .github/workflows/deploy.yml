@@ -19,17 +19,10 @@ jobs:
           node-version: '22'
           cache: npm
 
-      - name: Install dependencies for RED harness
-        shell: bash
-        run: |
-          set +e
-          npm install --package-lock=false --verbose
-          code=$?
-          if [ "$code" -ne 0 ]; then
-            echo "=== npm debug log ==="
-            cat "$HOME"/.npm/_logs/*-debug-0.log || true
-          fi
-          exit "$code"
+      # npm 10.9.8 crashes in Arborist while resolving Vitest 4.1.x peers.
+      - run: npm install --global npm@11.6.0
+
+      - run: npm install --package-lock=false
 
       - run: npm test
 
@@ -51,6 +44,8 @@ jobs:
         with:
           node-version: '22'
           cache: npm
+
+      - run: npm install --global npm@11.6.0
 
       - run: npm ci
 
