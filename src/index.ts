@@ -8,7 +8,13 @@ import {
   togglePreserve,
 } from './db';
 import { mainPage } from './pages';
-import { MAX_CONTENT_BYTES, isSameOrigin, utf8Size } from './http';
+import {
+  MAX_CONTENT_BYTES,
+  createNonce,
+  isSameOrigin,
+  securityHeaders,
+  utf8Size,
+} from './http';
 import { parseApiRoom, parsePageRoom } from './rooms';
 
 export { Room };
@@ -243,8 +249,9 @@ export default {
       return new Response('Not Found', { status: 404 });
     }
 
-    return new Response(mainPage(room), {
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
-    });
+    const nonce = createNonce();
+    const headers = securityHeaders(nonce);
+    headers.set('Content-Type', 'text/html; charset=utf-8');
+    return new Response(mainPage(room, nonce), { headers });
   },
 };
