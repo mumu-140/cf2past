@@ -24,13 +24,6 @@ jobs:
 
       - run: npm ci
 
-      - name: Compute exact browser dependency SRI
-        run: |
-          curl -fsSL https://cdn.jsdelivr.net/npm/marked@18.0.12/lib/marked.umd.js -o /tmp/marked.umd.js
-          curl -fsSL https://cdn.jsdelivr.net/npm/dompurify@3.4.15/dist/purify.min.js -o /tmp/purify.min.js
-          echo "MARKED_SRI=sha384-$(openssl dgst -sha384 -binary /tmp/marked.umd.js | openssl base64 -A)"
-          echo "DOMPURIFY_SRI=sha384-$(openssl dgst -sha384 -binary /tmp/purify.min.js | openssl base64 -A)"
-
       - run: npm test
 
       - run: npm run typecheck
