@@ -19,9 +19,17 @@ jobs:
           node-version: '22'
           cache: npm
 
-      # Diagnostic bootstrap: ignore the pre-hardening lockfile so the
-      # regression suite can reach RED. A fresh lock is committed before merge.
-      - run: npm install --package-lock=false
+      - name: Install dependencies for RED harness
+        shell: bash
+        run: |
+          set +e
+          npm install --package-lock=false --verbose
+          code=$?
+          if [ "$code" -ne 0 ]; then
+            echo "=== npm debug log ==="
+            cat "$HOME"/.npm/_logs/*-debug-0.log || true
+          fi
+          exit "$code"
 
       - run: npm test
 
