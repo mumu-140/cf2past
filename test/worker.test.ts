@@ -35,6 +35,31 @@ describe('Worker API boundaries', () => {
     expect(response.status).toBe(404);
   });
 
+  it('returns 400 for malformed API room parameters', async () => {
+    const { cookie } = await authenticatedUser('bad-room-user');
+    const requests = [
+      authedRequest('/api/history/%ZZ', cookie),
+      authedRequest('/api/new/%ZZ', cookie, {
+        method: 'POST',
+        headers: { Origin: ORIGIN, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: 'x' }),
+      }),
+      authedRequest('/api/restore/%ZZ/1', cookie, {
+        method: 'POST',
+        headers: { Origin: ORIGIN },
+      }),
+      authedRequest('/api/ws/%ZZ', cookie, {
+        headers: { Origin: ORIGIN, Upgrade: 'websocket' },
+      }),
+    ];
+
+    for (const request of requests) {
+      const response = await workerExports.default.fetch(request);
+      if (response.webSocket) response.webSocket.close();
+      expect(response.status).toBe(400);
+    }
+  });
+
   it('rejects cross-origin New before reaching the Durable Object', async () => {
     const { cookie } = await authenticatedUser('origin-user');
     const response = await workerExports.default.fetch(authedRequest('/api/new/work', cookie, {
@@ -114,7 +139,7 @@ describe('Worker API boundaries', () => {
     expect(unknown.status).toBe(400);
   });
 
-  it('rejects a cross-origin WebSocket upgrade before forwarding it', async () => {
+  it('rejects cross-origin WebSocket upgrade before forwarding it', async () => {
     const { cookie } = await authenticatedUser('ws-origin-user');
     const response = await workerExports.default.fetch(authedRequest('/api/ws/work', cookie, {
       headers: {
