@@ -73,6 +73,33 @@ describe('Worker API boundaries', () => {
     expect(response.status).toBe(403);
   });
 
+  it('rejects cross-origin restore and history mutations', async () => {
+    const { cookie } = await authenticatedUser('mutation-origin-user');
+    const requests = [
+      authedRequest('/api/restore/work/1', cookie, {
+        method: 'POST',
+        headers: { Origin: 'https://evil.example' },
+      }),
+      authedRequest('/api/history/work/1', cookie, {
+        method: 'DELETE',
+        headers: { Origin: 'https://evil.example' },
+      }),
+      authedRequest('/api/history/work/1', cookie, {
+        method: 'PATCH',
+        headers: {
+          Origin: 'https://evil.example',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ action: 'pin' }),
+      }),
+    ];
+
+    for (const request of requests) {
+      const response = await workerExports.default.fetch(request);
+      expect(response.status).toBe(403);
+    }
+  });
+
   it('forwards final New content atomically under the authenticated user', async () => {
     const { cookie } = await authenticatedUser('new-route-user');
     const response = await workerExports.default.fetch(authedRequest('/api/new/work', cookie, {
@@ -139,7 +166,7 @@ describe('Worker API boundaries', () => {
     expect(unknown.status).toBe(400);
   });
 
-  it('rejects cross-origin WebSocket upgrade before forwarding it', async () => {
+  it('rejects a cross-origin WebSocket upgrade before forwarding it', async () => {
     const { cookie } = await authenticatedUser('ws-origin-user');
     const response = await workerExports.default.fetch(authedRequest('/api/ws/work', cookie, {
       headers: {
