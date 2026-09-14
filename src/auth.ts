@@ -36,6 +36,16 @@ function expiredCookie(name: string): string {
   return `${name}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
 }
 
+async function cleanupExpiredSessions(env: Env): Promise<void> {
+  try {
+    await env.DB.prepare(
+      "DELETE FROM sessions WHERE expires_at <= datetime('now')"
+    ).run();
+  } catch (error) {
+    console.error('Failed to clean expired sessions', error);
+  }
+}
+
 export async function validateSession(request: Request, env: Env): Promise<User | null> {
   const token = getSessionToken(request);
   if (!token) return null;
@@ -54,6 +64,7 @@ async function createSession(userId: number, env: Env): Promise<string> {
   await env.DB.prepare(
     'INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)'
   ).bind(token, userId, expiresAt).run();
+  await cleanupExpiredSessions(env);
   return token;
 }
 
