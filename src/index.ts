@@ -1,13 +1,77 @@
-import { handleAuth, validateSession } from './auth';
+import { handleAuth, logout, validateSession } from './auth';
 import { Room } from './room';
-import { getHistory, deleteHistory, togglePin, togglePreserve } from './db';
-import { loginPage, setupPage, mainPage } from './pages';
+import {
+  deleteHistory,
+  getHistory,
+  getHistoryItem,
+  togglePin,
+  togglePreserve,
+} from './db';
+import { mainPage } from './pages';
+import {
+  MAX_CONTENT_BYTES,
+  createNonce,
+  isSameOrigin,
+  securityHeaders,
+  utf8Size,
+} from './http';
+import { parseApiRoom, parsePageRoom } from './rooms';
 
 export { Room };
 
 export interface Env {
   DB: D1Database;
   ROOM: DurableObjectNamespace;
+}
+
+function jsonError(error: string, status: number): Response {
+  return Response.json({ error }, { status });
+}
+
+function parsePositiveId(raw: string): number | null {
+  if (!/^[1-9]\d*$/.test(raw)) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) ? value : null;
+}
+
+function parseSingleRoomRoute(path: string, prefix: string): string | null {
+  if (!path.startsWith(prefix)) return null;
+  const rawRoom = path.slice(prefix.length);
+  if (!rawRoom || rawRoom.includes('/')) return null;
+  return parseApiRoom(rawRoom);
+}
+
+async function readContent(request: Request): Promise<string | null> {
+  let value: unknown;
+  try {
+    value = await request.json();
+  } catch {
+    return null;
+  }
+
+  if (!value || typeof value !== 'object') return null;
+  const content = (value as { content?: unknown }).content;
+  return typeof content === 'string' ? content : null;
+}
+
+async function forwardRoomAction(
+  request: Request,
+  env: Env,
+  room: string,
+  userId: number,
+  action: 'new' | 'restore',
+  content: string,
+): Promise<Response> {
+  const id = env.ROOM.idFromName(room);
+  const stub = env.ROOM.get(id);
+  const doUrl = new URL(request.url);
+  doUrl.searchParams.set('action', action);
+
+  return stub.fetch(new Request(doUrl.toString(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ room, userId, content }),
+  }));
 }
 
 export default {
@@ -24,9 +88,26 @@ export default {
       return Response.redirect(new URL('/login', url.origin).toString(), 302);
     }
 
-    // WebSocket 升级
+    if (path === '/logout') {
+      if (request.method !== 'POST') {
+        return jsonError('method not allowed', 405);
+      }
+      if (!isSameOrigin(request)) {
+        return jsonError('forbidden', 403);
+      }
+      return logout(request, env);
+    }
+
     if (path.startsWith('/api/ws/')) {
-      const room = path.slice(8) || 'default';
+      if (!isSameOrigin(request)) {
+        return jsonError('forbidden', 403);
+      }
+
+      const room = parseSingleRoomRoute(path, '/api/ws/');
+      if (!room) {
+        return jsonError('invalid room', 400);
+      }
+
       const id = env.ROOM.idFromName(room);
       const stub = env.ROOM.get(id);
       const doUrl = new URL(request.url);
@@ -35,46 +116,142 @@ export default {
       return stub.fetch(new Request(doUrl.toString(), request));
     }
 
-    // 新建会话
-    if (path.startsWith('/api/new/') && request.method === 'POST') {
-      const room = path.slice(9) || 'default';
-      const id = env.ROOM.idFromName(room);
-      const stub = env.ROOM.get(id);
-      const doUrl = new URL(request.url);
-      doUrl.searchParams.set('action', 'new');
-      return stub.fetch(new Request(doUrl.toString(), { method: 'POST' }));
+    if (path.startsWith('/api/new/')) {
+      if (request.method !== 'POST') {
+        return jsonError('method not allowed', 405);
+      }
+      if (!isSameOrigin(request)) {
+        return jsonError('forbidden', 403);
+      }
+
+      const room = parseSingleRoomRoute(path, '/api/new/');
+      if (!room) {
+        return jsonError('invalid room', 400);
+      }
+
+      const content = await readContent(request);
+      if (content === null) {
+        return jsonError('invalid payload', 400);
+      }
+      if (utf8Size(content) > MAX_CONTENT_BYTES) {
+        return jsonError('content too large', 413);
+      }
+
+      return forwardRoomAction(request, env, room, user.id, 'new', content);
     }
 
-    // 历史 API
+    if (path.startsWith('/api/restore/')) {
+      if (request.method !== 'POST') {
+        return jsonError('method not allowed', 405);
+      }
+      if (!isSameOrigin(request)) {
+        return jsonError('forbidden', 403);
+      }
+
+      const segments = path.slice('/api/restore/'.length).split('/');
+      if (segments.length !== 2) {
+        return jsonError('invalid restore route', 404);
+      }
+
+      const room = parseApiRoom(segments[0]);
+      if (!room) {
+        return jsonError('invalid room', 400);
+      }
+
+      const historyId = parsePositiveId(segments[1]);
+      if (historyId === null) {
+        return jsonError('invalid history id', 400);
+      }
+
+      const item = await getHistoryItem(env.DB, historyId, room);
+      if (!item) {
+        return jsonError('history item not found', 404);
+      }
+      if (utf8Size(item.content) > MAX_CONTENT_BYTES) {
+        return jsonError('content too large', 413);
+      }
+
+      return forwardRoomAction(request, env, room, user.id, 'restore', item.content);
+    }
+
     if (path.startsWith('/api/history/')) {
-      const segments = path.slice(13).split('/');
-      const room = segments[0] || 'default';
-
-      // DELETE /api/history/:room/:id
-      if (request.method === 'DELETE' && segments[1]) {
-        await deleteHistory(env.DB, parseInt(segments[1]), room);
-        return Response.json({ ok: true });
+      const segments = path.slice('/api/history/'.length).split('/');
+      if (segments.length < 1 || segments.length > 2 || !segments[0]) {
+        return jsonError('invalid history route', 404);
       }
 
-      // PATCH /api/history/:room/:id
-      if (request.method === 'PATCH' && segments[1]) {
-        const body = await request.json<{ action: string }>();
-        const id = parseInt(segments[1]);
-        if (body.action === 'pin') await togglePin(env.DB, id, room);
-        if (body.action === 'preserve') await togglePreserve(env.DB, id, room);
-        return Response.json({ ok: true });
+      const room = parseApiRoom(segments[0]);
+      if (!room) {
+        return jsonError('invalid room', 400);
       }
 
-      // GET /api/history/:room
-      const query = url.searchParams.get('q') || '';
-      const items = await getHistory(env.DB, room, query);
-      return Response.json(items);
+      if (segments.length === 1) {
+        if (request.method !== 'GET') {
+          return jsonError('method not allowed', 405);
+        }
+        const query = url.searchParams.get('q') || '';
+        const items = await getHistory(env.DB, room, query);
+        return Response.json(items);
+      }
+
+      if (!isSameOrigin(request)) {
+        return jsonError('forbidden', 403);
+      }
+
+      const historyId = parsePositiveId(segments[1]);
+      if (historyId === null) {
+        return jsonError('invalid history id', 400);
+      }
+
+      if (request.method === 'DELETE') {
+        const deleted = await deleteHistory(env.DB, historyId, room);
+        return deleted
+          ? Response.json({ ok: true })
+          : jsonError('history item not found', 404);
+      }
+
+      if (request.method === 'PATCH') {
+        let body: unknown;
+        try {
+          body = await request.json();
+        } catch {
+          return jsonError('invalid payload', 400);
+        }
+
+        if (!body || typeof body !== 'object') {
+          return jsonError('invalid payload', 400);
+        }
+
+        const action = (body as { action?: unknown }).action;
+        let updated = false;
+        if (action === 'pin') {
+          updated = await togglePin(env.DB, historyId, room);
+        } else if (action === 'preserve') {
+          updated = await togglePreserve(env.DB, historyId, room);
+        } else {
+          return jsonError('unknown action', 400);
+        }
+
+        return updated
+          ? Response.json({ ok: true })
+          : jsonError('history item not found', 404);
+      }
+
+      return jsonError('method not allowed', 405);
     }
 
-    // 主页面
-    const room = path === '/' ? 'default' : path.slice(1);
-    return new Response(mainPage(room), {
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
-    });
+    if (path.startsWith('/api/')) {
+      return jsonError('not found', 404);
+    }
+
+    const room = parsePageRoom(path);
+    if (!room) {
+      return new Response('Not Found', { status: 404 });
+    }
+
+    const nonce = createNonce();
+    const headers = securityHeaders(nonce);
+    headers.set('Content-Type', 'text/html; charset=utf-8');
+    return new Response(mainPage(room, nonce), { headers });
   },
 };

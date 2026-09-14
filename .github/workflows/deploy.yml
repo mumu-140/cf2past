@@ -1,18 +1,51 @@
-name: Deploy to Cloudflare Workers
+name: CI and Deploy
 
 on:
+  pull_request:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
-  deploy:
+  verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
+          cache: npm
+
+      # Pin npm so CI resolves the dependency tree consistently across runner images.
+      - run: npm install --global npm@11.6.0
+
+      - run: npm ci
+
+      - run: npm test
+
+      - run: npm run typecheck
+
+      - name: Generate validation config
+        run: sed "s/YOUR_D1_DATABASE_ID/00000000-0000-0000-0000-000000000001/" wrangler.example.toml > wrangler.toml
+
+      - run: npm run dry-run
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+
+      - run: npm install --global npm@11.6.0
 
       - run: npm ci
 
@@ -26,7 +59,7 @@ jobs:
         env:
           CLOUDFLARE_D1_DATABASE_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
 
-      - run: npx wrangler deploy
+      - run: npm run deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
