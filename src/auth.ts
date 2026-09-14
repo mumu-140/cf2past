@@ -1,4 +1,5 @@
 import type { Env } from './index';
+import { createNonce, securityHeaders } from './http';
 import { hashPassword, verifyPassword } from './password';
 
 export interface User {
@@ -34,6 +35,12 @@ function sessionCookie(token: string): string {
 
 function expiredCookie(name: string): string {
   return `${name}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
+}
+
+function htmlResponse(page: string, nonce: string, status = 200): Response {
+  const headers = securityHeaders(nonce);
+  headers.set('Content-Type', 'text/html; charset=utf-8');
+  return new Response(page, { status, headers });
 }
 
 async function cleanupExpiredSessions(env: Env): Promise<void> {
@@ -94,9 +101,8 @@ async function handleSetup(request: Request, env: Env): Promise<Response> {
   }
 
   if (request.method === 'GET') {
-    return new Response(setupPage(), {
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
-    });
+    const nonce = createNonce();
+    return htmlResponse(setupPage(undefined, nonce), nonce);
   }
 
   const form = await request.formData();
@@ -104,10 +110,8 @@ async function handleSetup(request: Request, env: Env): Promise<Response> {
   const password = String(form.get('password') ?? '');
 
   if (!username || password.length < 8) {
-    return new Response(setupPage('用户名不能为空，密码至少 8 位'), {
-      status: 400,
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
-    });
+    const nonce = createNonce();
+    return htmlResponse(setupPage('用户名不能为空，密码至少 8 位', nonce), nonce, 400);
   }
 
   const hash = await hashPassword(password);
@@ -136,9 +140,8 @@ async function handleLogin(request: Request, env: Env): Promise<Response> {
   }
 
   if (request.method === 'GET') {
-    return new Response(loginPage(), {
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
-    });
+    const nonce = createNonce();
+    return htmlResponse(loginPage(undefined, nonce), nonce);
   }
 
   const form = await request.formData();
@@ -150,18 +153,14 @@ async function handleLogin(request: Request, env: Env): Promise<Response> {
   ).bind(username).first<{ id: number; password_hash: string }>();
 
   if (!user) {
-    return new Response(loginPage('用户名或密码错误'), {
-      status: 401,
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
-    });
+    const nonce = createNonce();
+    return htmlResponse(loginPage('用户名或密码错误', nonce), nonce, 401);
   }
 
   const verification = await verifyPassword(password, user.password_hash);
   if (!verification.valid) {
-    return new Response(loginPage('用户名或密码错误'), {
-      status: 401,
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
-    });
+    const nonce = createNonce();
+    return htmlResponse(loginPage('用户名或密码错误', nonce), nonce, 401);
   }
 
   if (verification.needsRehash) {
