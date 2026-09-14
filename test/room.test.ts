@@ -15,18 +15,8 @@ function roomStub(name: string): DurableObjectStub {
   return env.ROOM.get(env.ROOM.idFromName(`${name}-${crypto.randomUUID()}`));
 }
 
-async function edit(stub: DurableObjectStub, userId: number, room: string, content: string): Promise<void> {
-  await runInDurableObject(stub, async (instance: Room, state) => {
-    const pair = new WebSocketPair();
-    const sockets = Object.values(pair);
-    const server = sockets[1];
-    state.acceptWebSocket(server, [`uid:${userId}`, `room:${room}`]);
-    try {
-      await instance.webSocketMessage(server, content);
-    } finally {
-      await instance.webSocketClose(server);
-    }
-  });
+async function edit(stub: DurableObjectStub, userId: number, room: string, content: string): Promise<boolean> {
+  return runInDurableObject(stub, async (instance: Room) => instance.applyEdit(userId, room, content));
 }
 
 async function storedState(stub: DurableObjectStub): Promise<{
@@ -50,7 +40,7 @@ describe('Room Durable Object', () => {
     const userId = await createUser('alarm-user');
     const stub = roomStub('alarm');
 
-    await edit(stub, userId, 'work', 'draft');
+    expect(await edit(stub, userId, 'work', 'draft')).toBe(true);
 
     const before = await env.DB.prepare('SELECT COUNT(*) AS c FROM history').first<{ c: number }>();
     expect(before?.c).toBe(0);
@@ -138,11 +128,11 @@ describe('Room Durable Object', () => {
     expect(state.entryId).not.toBe(originalId);
   });
 
-  it('rejects oversized websocket content without changing room state', async () => {
+  it('rejects oversized content without changing room state', async () => {
     const userId = await createUser('oversized-user');
     const stub = roomStub('oversized');
 
-    await edit(stub, userId, 'shared', 'a'.repeat(MAX_CONTENT_BYTES + 1));
+    expect(await edit(stub, userId, 'shared', 'a'.repeat(MAX_CONTENT_BYTES + 1))).toBe(false);
 
     const state = await storedState(stub);
     const count = await env.DB.prepare('SELECT COUNT(*) AS c FROM history').first<{ c: number }>();
