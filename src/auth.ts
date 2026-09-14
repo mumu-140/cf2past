@@ -1,4 +1,5 @@
-import { Env } from './index';
+import type { Env } from './index';
+import { hashPassword, verifyPassword } from './password';
 
 export interface User {
   id: number;
@@ -6,60 +7,37 @@ export interface User {
 }
 
 const SESSION_DAYS = 7;
-const PBKDF2_ITERATIONS = 100000;
-
-async function hashPassword(password: string): Promise<string> {
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(password),
-    'PBKDF2',
-    false,
-    ['deriveBits']
-  );
-  const bits = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
-    key,
-    256
-  );
-  const hash = new Uint8Array(bits);
-  const saltHex = [...salt].map(b => b.toString(16).padStart(2, '0')).join('');
-  const hashHex = [...hash].map(b => b.toString(16).padStart(2, '0')).join('');
-  return `${saltHex}:${hashHex}`;
-}
-
-async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  const [saltHex, hashHex] = stored.split(':');
-  const salt = new Uint8Array(saltHex.match(/.{2}/g)!.map(b => parseInt(b, 16)));
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(password),
-    'PBKDF2',
-    false,
-    ['deriveBits']
-  );
-  const bits = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
-    key,
-    256
-  );
-  const computed = [...new Uint8Array(bits)].map(b => b.toString(16).padStart(2, '0')).join('');
-  return computed === hashHex;
-}
+const SESSION_COOKIE = '__Host-cf2past_session';
+const LEGACY_SESSION_COOKIE = 'session';
 
 function getCookie(request: Request, name: string): string | null {
-  const header = request.headers.get('Cookie') || '';
-  const match = header.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
-  return match ? match[1] : null;
+  const header = request.headers.get('Cookie') ?? '';
+  for (const part of header.split(';')) {
+    const trimmed = part.trim();
+    const separator = trimmed.indexOf('=');
+    if (separator < 0) continue;
+    if (trimmed.slice(0, separator) === name) {
+      return trimmed.slice(separator + 1) || null;
+    }
+  }
+  return null;
+}
+
+function getSessionToken(request: Request): string | null {
+  return getCookie(request, SESSION_COOKIE) ?? getCookie(request, LEGACY_SESSION_COOKIE);
 }
 
 function sessionCookie(token: string): string {
-  const expires = new Date(Date.now() + SESSION_DAYS * 86400000).toUTCString();
-  return `session=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Expires=${expires}`;
+  const expires = new Date(Date.now() + SESSION_DAYS * 86_400_000).toUTCString();
+  return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Expires=${expires}`;
+}
+
+function expiredCookie(name: string): string {
+  return `${name}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
 }
 
 export async function validateSession(request: Request, env: Env): Promise<User | null> {
-  const token = getCookie(request, 'session');
+  const token = getSessionToken(request);
   if (!token) return null;
 
   const row = await env.DB.prepare(
@@ -72,11 +50,23 @@ export async function validateSession(request: Request, env: Env): Promise<User 
 
 async function createSession(userId: number, env: Env): Promise<string> {
   const token = crypto.randomUUID();
-  const expiresAt = new Date(Date.now() + SESSION_DAYS * 86400000).toISOString();
+  const expiresAt = new Date(Date.now() + SESSION_DAYS * 86_400_000).toISOString();
   await env.DB.prepare(
     'INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)'
   ).bind(token, userId, expiresAt).run();
   return token;
+}
+
+export async function logout(request: Request, env: Env): Promise<Response> {
+  const token = getSessionToken(request);
+  if (token) {
+    await env.DB.prepare('DELETE FROM sessions WHERE token = ?').bind(token).run();
+  }
+
+  const headers = new Headers();
+  headers.append('Set-Cookie', expiredCookie(SESSION_COOKIE));
+  headers.append('Set-Cookie', expiredCookie(LEGACY_SESSION_COOKIE));
+  return new Response(null, { status: 204, headers });
 }
 
 export async function handleAuth(request: Request, env: Env, path: string): Promise<Response> {
@@ -85,7 +75,7 @@ export async function handleAuth(request: Request, env: Env, path: string): Prom
 }
 
 async function handleSetup(request: Request, env: Env): Promise<Response> {
-  const { loginPage, setupPage } = await import('./pages');
+  const { setupPage } = await import('./pages');
 
   const userCount = await env.DB.prepare('SELECT COUNT(*) as c FROM users').first<{ c: number }>();
   if (userCount && userCount.c > 0) {
@@ -99,11 +89,11 @@ async function handleSetup(request: Request, env: Env): Promise<Response> {
   }
 
   const form = await request.formData();
-  const username = (form.get('username') as string || '').trim();
-  const password = form.get('password') as string || '';
+  const username = String(form.get('username') ?? '').trim();
+  const password = String(form.get('password') ?? '');
 
-  if (!username || password.length < 4) {
-    return new Response(setupPage('用户名不能为空，密码至少 4 位'), {
+  if (!username || password.length < 8) {
+    return new Response(setupPage('用户名不能为空，密码至少 8 位'), {
       status: 400,
       headers: { 'Content-Type': 'text/html; charset=utf-8' },
     });
@@ -120,14 +110,14 @@ async function handleSetup(request: Request, env: Env): Promise<Response> {
   return new Response(null, {
     status: 302,
     headers: {
-      'Location': '/',
+      Location: '/',
       'Set-Cookie': sessionCookie(token),
     },
   });
 }
 
 async function handleLogin(request: Request, env: Env): Promise<Response> {
-  const { loginPage, setupPage } = await import('./pages');
+  const { loginPage } = await import('./pages');
 
   const userCount = await env.DB.prepare('SELECT COUNT(*) as c FROM users').first<{ c: number }>();
   if (!userCount || userCount.c === 0) {
@@ -141,18 +131,33 @@ async function handleLogin(request: Request, env: Env): Promise<Response> {
   }
 
   const form = await request.formData();
-  const username = (form.get('username') as string || '').trim();
-  const password = form.get('password') as string || '';
+  const username = String(form.get('username') ?? '').trim();
+  const password = String(form.get('password') ?? '');
 
   const user = await env.DB.prepare(
     'SELECT id, password_hash FROM users WHERE username = ?'
   ).bind(username).first<{ id: number; password_hash: string }>();
 
-  if (!user || !(await verifyPassword(password, user.password_hash))) {
+  if (!user) {
     return new Response(loginPage('用户名或密码错误'), {
       status: 401,
       headers: { 'Content-Type': 'text/html; charset=utf-8' },
     });
+  }
+
+  const verification = await verifyPassword(password, user.password_hash);
+  if (!verification.valid) {
+    return new Response(loginPage('用户名或密码错误'), {
+      status: 401,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    });
+  }
+
+  if (verification.needsRehash) {
+    const upgraded = await hashPassword(password);
+    await env.DB.prepare(
+      'UPDATE users SET password_hash = ? WHERE id = ?'
+    ).bind(upgraded, user.id).run();
   }
 
   const token = await createSession(user.id, env);
@@ -160,7 +165,7 @@ async function handleLogin(request: Request, env: Env): Promise<Response> {
   return new Response(null, {
     status: 302,
     headers: {
-      'Location': '/',
+      Location: '/',
       'Set-Cookie': sessionCookie(token),
     },
   });
