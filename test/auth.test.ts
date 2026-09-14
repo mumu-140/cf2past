@@ -116,4 +116,23 @@ describe('authentication migration', () => {
     expect(cookie).toContain('session=');
     expect(cookie).toContain('Max-Age=0');
   });
+
+  it('opportunistically removes expired sessions after a successful login', async () => {
+    const passwordHash = await legacyHash('cleanup-pass');
+    const userId = await insertUser('cleanup-user', passwordHash);
+    await env.DB.prepare(
+      "INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '-1 day'))"
+    ).bind('expired-token', userId).run();
+
+    const response = await handleAuth(new Request('https://clip.example/login', {
+      method: 'POST',
+      body: new URLSearchParams({ username: 'cleanup-user', password: 'cleanup-pass' }),
+    }), env, '/login');
+    expect(response.status).toBe(302);
+
+    const expired = await env.DB.prepare(
+      'SELECT COUNT(*) AS c FROM sessions WHERE token = ?'
+    ).bind('expired-token').first<{ c: number }>();
+    expect(expired?.c).toBe(0);
+  });
 });
