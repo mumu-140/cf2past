@@ -12,14 +12,14 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
 
-      # npm 10.9.8 crashes in Arborist while resolving Vitest 4.1.x peers.
+      # Pin npm so CI resolves the dependency tree consistently across runner images.
       - run: npm install --global npm@11.6.0
 
       - run: npm ci
@@ -38,11 +38,11 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
 
       - run: npm install --global npm@11.6.0
