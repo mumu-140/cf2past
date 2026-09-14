@@ -1,52 +1,19 @@
 # cf2past
 
-一个给自己设备用的轻量实时剪贴板。你可以在两台设备上打开同一个房间，在一台设备输入或粘贴文本，另一台设备会实时同步。
+一个面向个人设备或小范围可信团队的轻量自托管实时剪贴板，基于 Cloudflare Workers、Durable Objects 和 D1。
 
 [English](README.md) | 简体中文
 
-## 目录
-
-- [简介](#简介)
-- [功能](#功能)
-- [工作原理](#工作原理)
-- [快速开始：Cloudflare 手动部署](#快速开始cloudflare-手动部署)
-- [快速开始：GitHub Actions 自动部署](#快速开始github-actions-自动部署)
-- [首次登录](#首次登录)
-- [使用说明](#使用说明)
-- [配置参数详解](#配置参数详解)
-- [数据库结构](#数据库结构)
-- [本地开发](#本地开发)
-- [迁移说明](#迁移说明)
-- [安全说明](#安全说明)
-- [常见问题](#常见问题)
-- [许可证](#许可证)
-
-## 简介
-
-cf2past 是一个自托管跨设备剪贴板，基于 Cloudflare Workers、Durable Objects 和 D1 构建。
-
-它适合个人或小范围可信用户使用，不是公开 pastebin。第一次访问会创建管理员账号，后续访问需要登录。
-
-常见使用场景：
-
-- 把手机上的文字发送到电脑。
-- 在不同设备之间传命令、笔记、链接或 Markdown。
-- 为每个房间保留一小段可搜索历史记录。
-- 使用不同房间区分场景，例如 `/work`、`/personal`、`/temp`。
-
 ## 功能
 
-- 基于 WebSocket 的实时同步。
-- URL 路径即房间，房间之间相互隔离。
-- 用户名 + 密码登录，使用 HttpOnly Cookie 保存会话。
-- 首次启动自动进入初始化页面，创建第一个用户。
-- 每个房间有独立历史记录，支持搜索。
-- 历史记录支持置顶、保留、删除。
-- 支持 Markdown 预览模式。
-- 支持深色和浅色主题。
-- 无前端框架，无需自管服务器。
+- 通过 WebSocket 在多个浏览器之间实时同步房间文本。
+- 使用 D1 保存每个房间的可搜索历史记录。
+- 支持置顶、保留、删除、新建和恢复历史记录。
+- Markdown 预览使用 Marked，并通过 DOMPurify 净化。
+- 无前端框架，浏览器端保持轻量。
+- 首次初始化后，后续访问需要登录。
 
-## 工作原理
+## 架构
 
 ```text
 浏览器 A ── WebSocket ──┐
@@ -59,22 +26,68 @@ cf2past 是一个自托管跨设备剪贴板，基于 Cloudflare Workers、Durab
                       D1 数据库
 ```
 
-Worker 负责登录、路由、页面和历史记录 API。每个房间对应一个 Durable Object 实例。Durable Object 保存当前房间内容，并把变更广播给所有在线浏览器。D1 负责保存用户、会话和历史记录。
+Worker 负责 HTTP、认证和路由。每个规范化房间对应一个 Durable Object，该 Durable Object 是该房间实时状态的唯一权威来源。D1 保存用户、会话和历史记录。
 
-## 快速开始：Cloudflare 手动部署
+实时同步明确采用 last-write-wins（最后写入获胜）语义；cf2past 不是 CRDT，也不是多人协同编辑器。
 
-如果你想从自己的电脑部署，推荐使用这一种方式。
+## 房间语义
 
-### 1. 准备账号和工具
+一个房间严格对应一个解码后的 URL path segment：
 
-你需要：
+| URL | 房间 |
+| --- | --- |
+| `/` | `default` |
+| `/work` | `work` |
+| `/%E6%9D%A8%E6%A0%91` | `杨树` |
 
-- 一个 Cloudflare 账号。
-- Node.js 22 或更新版本。
-- npm。
-- Wrangler。本项目会通过 `npm install` 安装本地 Wrangler。
+`/lab/test` 这类嵌套路径会被拒绝。房间名支持 Unicode，最长 64 个 Unicode code point。
 
-克隆仓库并安装依赖：
+房间名只是标识符，不是权限边界。除非你在 Worker 前额外增加访问控制，否则任意已登录用户都可以访问任意合法房间名。
+
+## 编辑与历史记录语义
+
+剪贴板内容上限严格为 1 MiB，即 1,048,576 个 UTF-8 字节。超过限制的更新会在修改实时状态、广播状态或 D1 历史之前被拒绝。
+
+普通输入会更新当前实时房间，并合并历史记录写入。Durable Object 始终是实时状态的权威来源；即使权威内容是空字符串，重新连接后也会用服务器状态覆盖客户端旧内容。
+
+`New` 是 Durable Object 内的原子操作：必要时先持久化浏览器最后内容，然后清除当前 history identity、把实时房间置空，并向在线客户端广播空状态。它不再依赖“先发 WebSocket、再单独 HTTP reset”这种跨通道无序流程。
+
+恢复历史记录时，服务端按 history ID 从 D1 读取可信快照，将其加载到实时房间，并开始一个新的编辑会话；被恢复的历史行本身不会被修改。
+
+每个房间最多保留 50 条普通历史记录。置顶或保留的记录不参与普通历史自动清理。
+
+## 认证与会话
+
+首次访问 `/setup` 创建第一个账号。新密码至少 8 位。
+
+新密码哈希使用带版本标记的 PBKDF2-SHA256，迭代 600,000 次并使用随机 salt。旧版无版本标记的 100,000 次 PBKDF2 哈希仍可登录；旧账号成功登录后会自动升级为新哈希格式。
+
+新会话只签发 `__Host-cf2past_session` Cookie，并使用 `HttpOnly`、`Secure`、`SameSite=Strict`。迁移期间，仍未过期的旧 `session` Cookie 可以继续读取，但不会再签发新的旧 Cookie。会话有效期为 7 天。
+
+## 浏览器安全
+
+Markdown 预览链路为：
+
+```text
+文本 -> Marked -> DOMPurify -> DOM
+```
+
+未经净化的 Marked 输出不会直接写入预览 HTML。Marked 和 DOMPurify 使用精确版本 CDN URL，并带 Subresource Integrity（SRI）。
+
+应用脚本使用每个响应独立生成的 nonce，并受 Content Security Policy 约束；脚本执行不依赖 `unsafe-inline`，HTML 中也不使用 `onclick` 等内联事件属性。浏览器发起的状态修改请求会进行 same-origin 校验。
+
+安全边界和漏洞报告方式见 [SECURITY.md](SECURITY.md)。
+
+## 快速部署
+
+需要：
+
+- Cloudflare 账号
+- Node.js 22 或更新版本
+- npm
+- 项目依赖中的 Wrangler 4
+
+克隆并安装：
 
 ```bash
 git clone https://github.com/<your-name>/cf2past.git
@@ -82,370 +95,94 @@ cd cf2past
 npm install
 ```
 
-登录 Cloudflare：
+登录 Cloudflare 并创建 D1：
 
 ```bash
 npx wrangler login
-```
-
-### 2. 创建 D1 数据库
-
-创建数据库：
-
-```bash
 npx wrangler d1 create cf2past-db
 ```
 
-Wrangler 会输出类似内容：
-
-```toml
-[[d1_databases]]
-binding = "DB"
-database_name = "cf2past-db"
-database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-```
-
-复制其中的 `database_id`，下一步会用到。
-
-### 3. 创建 `wrangler.toml`
-
-复制示例配置：
+复制示例配置，并把 `YOUR_D1_DATABASE_ID` 替换成实际 D1 database id：
 
 ```bash
 cp wrangler.example.toml wrangler.toml
 ```
 
-打开 `wrangler.toml`，把下面这个占位符：
-
-```toml
-database_id = "YOUR_D1_DATABASE_ID"
-```
-
-替换成上一步创建 D1 数据库时得到的真实 `database_id`。
-
-注意：`wrangler.toml` 已加入 `.gitignore`，因为它可能包含你自己的 Cloudflare 资源 ID，不应该提交到开源仓库。
-
-### 4. 初始化数据库表
-
-初始化远程 Cloudflare D1 数据库：
+初始化新的远程数据库：
 
 ```bash
 npx wrangler d1 execute cf2past-db --remote --file=schema.sql
 ```
 
-如果只是本地开发，使用 `--local`：
+部署：
 
 ```bash
-npx wrangler d1 execute cf2past-db --local --file=schema.sql
+npm run deploy
 ```
 
-### 5. 部署
+打开 Worker 地址。全新数据库会跳转到 `/setup`，用于创建第一个账号。
 
-```bash
-npx wrangler deploy
-```
+## GitHub Actions 自动部署
 
-部署完成后，Wrangler 会输出 Worker 访问地址。用浏览器打开它，然后继续看 [首次登录](#首次登录)。
+`.github/workflows/deploy.yml` 将验证和生产部署分开。
 
-## 快速开始：GitHub Actions 自动部署
+Pull Request 会运行 verify job。推送到 `main` 也会先运行 verify，只有 verify 成功后才会执行生产部署。
 
-如果你想每次推送到 `main` 时自动部署，推荐使用这一种方式。
+自动部署前需要添加以下 repository secrets：
 
-### 1. Fork 或导入仓库
-
-把本仓库 Fork 到你自己的 GitHub 账号，或者导入为一个新仓库。
-
-### 2. 创建 Cloudflare API Token
-
-在 Cloudflare Dashboard 中：
-
-1. 打开 `My Profile`。
-2. 打开 `API Tokens`。
-3. 创建一个用于部署 Workers 和访问 D1 的 API Token。
-
-一个实用的自定义 Token 通常需要这些权限：
-
-- Account: Cloudflare Workers Scripts: Edit
-- Account: D1: Edit
-
-请把权限范围限制在你的账号下。不要使用 Global API Key。
-
-### 3. 获取 Cloudflare Account ID
-
-进入 Cloudflare Dashboard 的账号页面。很多 Cloudflare 页面右侧边栏都会显示 Account ID。
-
-### 4. 创建 D1 数据库
-
-本地执行一次：
-
-```bash
-npm install
-npx wrangler login
-npx wrangler d1 create cf2past-db
-```
-
-复制输出中的 `database_id`。
-
-初始化远程数据库：
-
-```bash
-npx wrangler d1 execute cf2past-db --remote --file=schema.sql
-```
-
-### 5. 添加 GitHub Secrets
-
-在你的 GitHub 仓库中：
-
-1. 打开 `Settings`。
-2. 打开 `Secrets and variables`。
-3. 打开 `Actions`。
-4. 新增以下 repository secrets：
-
-| Secret | 含义 |
+| Secret | 用途 |
 | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | Wrangler 部署时使用的 Cloudflare API Token。 |
-| `CLOUDFLARE_ACCOUNT_ID` | 你的 Cloudflare Account ID。 |
-| `CLOUDFLARE_D1_DATABASE_ID` | `wrangler d1 create` 输出的 D1 database id。 |
+| `CLOUDFLARE_API_TOKEN` | Wrangler 部署使用的 Cloudflare API Token |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Account ID |
+| `CLOUDFLARE_D1_DATABASE_ID` | CI 生成 `wrangler.toml` 时注入的真实 D1 database id |
 
-GitHub Actions 会在 CI 中从 `wrangler.example.toml` 生成 `wrangler.toml`，所以真实 database id 不会被提交到仓库。
+真实 D1 ID 和 Cloudflare 凭据不会写入仓库。
 
-### 6. 推送到 `main`
+Dependabot 已配置为每周检查 npm 和 GitHub Actions 依赖更新。
 
-```bash
-git push origin main
-```
+## 本地开发与验证
 
-GitHub Actions 会运行 `.github/workflows/deploy.yml` 并部署 Worker。
-
-## 首次登录
-
-打开 Worker 地址。第一次使用时，应用会跳转到 `/setup`。
-
-创建第一个账号：
-
-- Username：你想使用的用户名。
-- Password：至少 4 位。
-
-创建完成后，应用会写入会话 Cookie，并跳转到 `/`。
-
-## 使用说明
-
-### 房间
-
-URL 路径就是房间名：
-
-| URL | 房间 |
-| --- | --- |
-| `/` | `default` |
-| `/work` | `work` |
-| `/personal` | `personal` |
-
-在多台设备上打开同一个房间，就可以同步文本。
-
-### 编辑模式
-
-| 模式 | 用途 |
-| --- | --- |
-| `MD` | 以纯文本方式编辑 Markdown。 |
-| `TXT` | 编辑普通文本。 |
-| `Preview` | 把当前内容渲染为 Markdown 预览。 |
-
-### 历史记录
-
-点击 `History` 打开历史记录面板。
-
-每条历史记录支持：
-
-| 按钮 | 含义 |
-| --- | --- |
-| `Top` / `顶` | 置顶该记录。 |
-| `Keep` / `留` | 保留该记录，不参与自动清理。 |
-| `Delete` / `删` | 删除该记录。 |
-
-每个房间最多保留 50 条普通历史记录。置顶或保留的记录不会被自动清理。
-
-### 新会话
-
-点击 `New` 可以开始一条新的历史记录。如果不点击 `New`，在同一房间继续编辑会更新当前历史记录，而不是每次输入都创建新记录。
-
-## 配置参数详解
-
-### `wrangler.example.toml`
-
-```toml
-name = "cf2past"
-main = "src/index.ts"
-compatibility_date = "2024-12-01"
-
-[[d1_databases]]
-binding = "DB"
-database_name = "cf2past-db"
-database_id = "YOUR_D1_DATABASE_ID"
-
-[durable_objects]
-bindings = [
-  { name = "ROOM", class_name = "Room" }
-]
-
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["Room"]
-```
-
-字段说明：
-
-| 字段 | 是否必需 | 说明 |
-| --- | --- | --- |
-| `name` | 是 | Cloudflare Worker 名称。如果你想改 Worker 名，可以修改这里。 |
-| `main` | 是 | Worker 入口文件。除非你重构项目，否则保持 `src/index.ts`。 |
-| `compatibility_date` | 是 | Cloudflare Workers 运行时兼容日期。建议有意识地更新，并在部署前测试。 |
-| `binding = "DB"` | 是 | D1 binding 名称。代码使用 `env.DB`，如果改名，需要同步修改代码。 |
-| `database_name` | 是 | D1 数据库名称。文档示例使用 `cf2past-db`。 |
-| `database_id` | 部署必需 | Cloudflare D1 database id。真实值应放在本地 `wrangler.toml` 或 GitHub Secrets 中，不要提交到 Git。 |
-| `ROOM` | 是 | Durable Object namespace binding。代码使用 `env.ROOM`。 |
-| `class_name = "Room"` | 是 | 从 `src/room.ts` 导出的 Durable Object 类名。 |
-| `new_sqlite_classes` | 免费套餐通常需要 | 注册基于 SQLite storage 的 Durable Object 类。 |
-
-### GitHub Actions Secrets
-
-| Secret | 是否必需 | 说明 |
-| --- | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | 是 | `npx wrangler deploy` 使用的 Token。 |
-| `CLOUDFLARE_ACCOUNT_ID` | 是 | Wrangler 使用的 Cloudflare Account ID。 |
-| `CLOUDFLARE_D1_DATABASE_ID` | 是 | CI 中注入到 `wrangler.toml` 的 D1 database id。 |
-
-### 应用常量
-
-这些常量在源码中定义：
-
-| 文件 | 常量 | 默认值 | 含义 |
-| --- | --- | --- | --- |
-| `src/auth.ts` | `SESSION_DAYS` | `7` | 会话 Cookie 有效期，单位为天。 |
-| `src/auth.ts` | `PBKDF2_ITERATIONS` | `100000` | 密码哈希 PBKDF2 迭代次数。 |
-| `src/db.ts` | `MAX_HISTORY` | `50` | 每个房间保留的普通历史记录数量。 |
-
-如果你修改这些常量，请运行类型检查并重新部署。
-
-## 数据库结构
-
-`schema.sql` 会创建三张表：
-
-| 表 | 用途 |
-| --- | --- |
-| `users` | 保存用户名和密码哈希。 |
-| `sessions` | 保存会话 token 和过期时间。 |
-| `history` | 保存房间历史记录。 |
-
-索引：
-
-| 索引 | 用途 |
-| --- | --- |
-| `idx_history_room_order` | 加速按房间读取历史记录。 |
-| `idx_sessions_expires` | 加速会话过期检查。 |
-
-## 本地开发
-
-先创建本地配置：
+先创建本地 Wrangler 配置：
 
 ```bash
 cp wrangler.example.toml wrangler.toml
 ```
 
-你可以在 `wrangler.toml` 中填真实 D1 database id，也可以只使用本地 D1 模拟环境。
-
-初始化本地数据库表：
+本地 D1 开发：
 
 ```bash
 npx wrangler d1 execute cf2past-db --local --file=schema.sql
-```
-
-启动开发服务器：
-
-```bash
 npm run dev
 ```
 
-打开 Wrangler 输出的本地地址，通常是 `http://127.0.0.1:8787`。
-
-常用检查命令：
+合并或部署前运行：
 
 ```bash
-npx tsc --noEmit
-npx wrangler deploy --dry-run
+npm ci
+npm test
+npm run typecheck
+npm run dry-run
 ```
 
-## 迁移说明
+测试运行在 Cloudflare Workers 测试环境中，覆盖 Worker 路由、D1、Durable Object 状态、认证迁移、房间解析、请求大小限制、Markdown/CSP 接线和实时状态回归问题。
 
-仓库中包含旧迁移辅助文件：
+## 数据库与迁移
 
-| 文件 | 含义 |
-| --- | --- |
-| `migrate-v2.sql` | 旧版历史记录 schema，包含 `content_hash`。会 drop 并重建 `history`。 |
-| `migrate-v3.sql` | 当前历史记录 schema，不包含 `content_hash`。同样会 drop 并重建 `history`。 |
+`schema.sql` 是当前三张表的 schema：`users`、`sessions` 和 `history`。
 
-警告：这两个迁移文件都会删除 `history` 表。如果数据库里有需要保留的数据，请先导出备份，不要直接执行。
+本轮 hardening 不需要 D1 schema migration；当前分支的 `schema.sql` 与 `main` 完全一致。
 
-全新安装只需要执行：
+仓库中仍保留历史迁移辅助文件 `migrate-v2.sql` 和 `migrate-v3.sql`。它们会删除并重建 history 表。如果数据库中的历史记录需要保留，不要直接运行这些脚本，除非你已经做好备份并明确需要执行相应迁移。
 
-```bash
-npx wrangler d1 execute cf2past-db --remote --file=schema.sql
-```
+全新安装只需要使用 `schema.sql` 初始化数据库。
 
-## 安全说明
+## 运维与安全注意事项
 
-- 不要提交 `wrangler.toml`，它可能包含你的 Cloudflare 资源 ID。
-- 不要提交 `.dev.vars`、`.env`、API Token、Cookie 或数据库导出文件。
-- CI 部署参数使用 GitHub Secrets 保存。
-- Cloudflare API Token 使用够用即可的最小权限，不要使用 Global API Key。
-- 密码使用随机盐 + PBKDF2-SHA256 哈希后保存。
-- 会话使用 HttpOnly、Secure、SameSite=Strict Cookie。
-- 本项目适合个人或可信小团队使用，不适合作为匿名公开发帖服务。
-
-## 常见问题
-
-### `Binding DB is undefined`
-
-检查 `wrangler.toml` 是否存在，并且包含：
-
-```toml
-[[d1_databases]]
-binding = "DB"
-```
-
-### `Binding ROOM is undefined`
-
-检查 `wrangler.toml` 是否包含：
-
-```toml
-[durable_objects]
-bindings = [
-  { name = "ROOM", class_name = "Room" }
-]
-```
-
-### 第一次访问没有进入 `/setup`
-
-数据库里可能已经有用户。如果你在本地测试，可以清理本地 Wrangler state，或者检查本地 D1 数据库。
-
-### GitHub Actions 无法部署
-
-检查这些 secrets 是否存在：
-
-- `CLOUDFLARE_API_TOKEN`
-- `CLOUDFLARE_ACCOUNT_ID`
-- `CLOUDFLARE_D1_DATABASE_ID`
-
-同时检查 Cloudflare API Token 是否有 Workers 和 D1 的编辑权限。
-
-### 缺少 `wrangler.toml`
-
-从示例文件复制：
-
-```bash
-cp wrangler.example.toml wrangler.toml
-```
-
-然后把 `YOUR_D1_DATABASE_ID` 替换成真实 D1 database id。
+- 不要提交 `wrangler.toml`、`.dev.vars`、`.env`、API Token、Cookie、数据库导出或其他凭据。
+- 剪贴板文本对服务端可见，并会持久化到 D1 history；cf2past 不提供端到端加密。
+- Cloudflare API Token 使用满足部署需求的最小权限。
+- 定期更新 npm 和浏览器依赖，并在合并 Dependabot PR 前审查变更。
+- 如果修改 Workers compatibility date、bindings 或运行时依赖，需要重新执行完整验证后再部署。
 
 ## 许可证
 
