@@ -105,7 +105,7 @@ export default {
 
       const room = parseSingleRoomRoute(path, '/api/ws/');
       if (!room) {
-        return jsonError('invalid room', 404);
+        return jsonError('invalid room', 400);
       }
 
       const id = env.ROOM.idFromName(room);
@@ -126,7 +126,7 @@ export default {
 
       const room = parseSingleRoomRoute(path, '/api/new/');
       if (!room) {
-        return jsonError('invalid room', 404);
+        return jsonError('invalid room', 400);
       }
 
       const content = await readContent(request);
@@ -155,7 +155,7 @@ export default {
 
       const room = parseApiRoom(segments[0]);
       if (!room) {
-        return jsonError('invalid room', 404);
+        return jsonError('invalid room', 400);
       }
 
       const historyId = parsePositiveId(segments[1]);
@@ -182,7 +182,7 @@ export default {
 
       const room = parseApiRoom(segments[0]);
       if (!room) {
-        return jsonError('invalid room', 404);
+        return jsonError('invalid room', 400);
       }
 
       if (segments.length === 1) {
