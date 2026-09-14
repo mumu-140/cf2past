@@ -35,6 +35,16 @@ async function storedState(stub: DurableObjectStub): Promise<{
   }));
 }
 
+function nextSocketMessage(socket: WebSocket, failure: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(failure)), 500);
+    socket.addEventListener('message', event => {
+      clearTimeout(timeout);
+      resolve(String(event.data));
+    }, { once: true });
+  });
+}
+
 describe('Room Durable Object', () => {
   it('coalesces edits into an alarm instead of writing D1 immediately', async () => {
     const userId = await createUser('alarm-user');
@@ -109,6 +119,36 @@ describe('Room Durable Object', () => {
     expect(await runDurableObjectAlarm(stub)).toBe(false);
   });
 
+  it('New broadcasts an explicit empty state to already connected peers', async () => {
+    const userId = await createUser('new-broadcast-user');
+    const stub = roomStub('new-broadcast');
+    const response = await stub.fetch(new Request(`https://room.internal/?uid=${userId}&room=shared`, {
+      headers: { Upgrade: 'websocket' },
+    }));
+    expect(response.status).toBe(101);
+    const socket = response.webSocket;
+    expect(socket).not.toBeNull();
+    if (!socket) throw new Error('missing websocket');
+
+    const initial = nextSocketMessage(socket, 'server did not send initial state');
+    socket.accept();
+
+    try {
+      await expect(initial).resolves.toBe('');
+      const cleared = nextSocketMessage(socket, 'New did not clear connected peer');
+      const reset = await stub.fetch(new Request('https://room.internal/?action=new', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room: 'shared', userId, content: 'final before New' }),
+      }));
+
+      expect(reset.status).toBe(200);
+      await expect(cleared).resolves.toBe('');
+    } finally {
+      socket.close();
+    }
+  });
+
   it('restore flushes current content and starts a new history session', async () => {
     const userId = await createUser('restore-user');
     const stub = roomStub('restore');
@@ -165,13 +205,7 @@ describe('Room Durable Object', () => {
     expect(socket).not.toBeNull();
     if (!socket) throw new Error('missing websocket');
 
-    const message = new Promise<string>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('server did not send initial state')), 500);
-      socket.addEventListener('message', event => {
-        clearTimeout(timeout);
-        resolve(String(event.data));
-      }, { once: true });
-    });
+    const message = nextSocketMessage(socket, 'server did not send initial state');
     socket.accept();
 
     try {
