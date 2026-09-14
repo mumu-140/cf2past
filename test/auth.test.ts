@@ -97,6 +97,19 @@ describe('authentication migration', () => {
     expect(legacy).toEqual({ id: userId, username: 'cookie-user' });
   });
 
+  it('falls back to a valid legacy session when the new cookie is stale', async () => {
+    const userId = await insertUser('fallback-user');
+    await insertSession('valid-legacy-token', userId);
+
+    const session = await validateSession(new Request('https://clip.example/', {
+      headers: {
+        Cookie: '__Host-cf2past_session=missing-new-token; session=valid-legacy-token',
+      },
+    }), env);
+
+    expect(session).toEqual({ id: userId, username: 'fallback-user' });
+  });
+
   it('rejects an expired ISO-8601 session on the current UTC date', async () => {
     const userId = await insertUser('expired-iso-user');
     const date = new Date().toISOString().slice(0, 10);
