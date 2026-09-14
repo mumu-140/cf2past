@@ -1,0 +1,1 @@
+The hardening branch intentionally starts with regression tests before production fixes. The temporary `npm install` verification step exists only to regenerate `package-lock.json`; the final workflow must use `npm ci`.
