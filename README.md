@@ -56,4 +56,6 @@ Open the Worker URL and create your account.
 MIT
 ---
 ## Acknowledgments
-Special thanks to the Linux.do community for your support and feedback.
+
+Special thanks to the **[Linux.do](https://linux.do/)** community for your support and feedback.
+
