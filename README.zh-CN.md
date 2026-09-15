@@ -54,3 +54,7 @@ npm run deploy
 ## License
 
 MIT
+## Acknowledgments
+
+Special thanks to the **[Linux.do](https://linux.do/)** community for your support and feedback.
+
