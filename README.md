@@ -54,3 +54,6 @@ Open the Worker URL and create your account.
 ## License
 
 MIT
+---
+## Acknowledgments
+Special thanks to the Linux.do community for your support and feedback.
