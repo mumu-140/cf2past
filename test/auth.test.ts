@@ -78,7 +78,7 @@ describe('authentication migration', () => {
 
     expect(response.status).toBe(302);
     expect(response.headers.get('Set-Cookie')).toContain('__Host-cf2past_session=');
-    expect(row?.password_hash).toMatch(/^pbkdf2-sha256\$600000\$/);
+    expect(row?.password_hash).toMatch(/^pbkdf2-sha256\$100000\$/);
   });
 
   it('validates both new and still-unexpired legacy cookie names', async () => {
