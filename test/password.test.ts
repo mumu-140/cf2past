@@ -23,9 +23,13 @@ async function legacyHash(password: string): Promise<string> {
 }
 
 describe('password hashing', () => {
-  it('creates a versioned 600k PBKDF2-SHA256 hash', async () => {
+  it('creates a versioned PBKDF2-SHA256 hash within the Cloudflare production limit', async () => {
     const stored = await hashPassword('correct horse battery staple');
-    expect(stored).toMatch(/^pbkdf2-sha256\$600000\$[0-9a-f]{32}\$[0-9a-f]{64}$/);
+    const [, iterations] = stored.split('$');
+
+    expect(Number(iterations)).toBe(100000);
+    expect(Number(iterations)).toBeLessThanOrEqual(100000);
+    expect(stored).toMatch(/^pbkdf2-sha256\$100000\$[0-9a-f]{32}\$[0-9a-f]{64}$/);
     expect(await verifyPassword('correct horse battery staple', stored)).toEqual({
       valid: true,
       needsRehash: false,
