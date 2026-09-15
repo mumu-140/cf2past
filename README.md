@@ -27,32 +27,104 @@ It is designed for personal use or a small trusted team.
 5. Open the same room on another device and start typing. Text will synchronize automatically.
 6. Use **History** to search or restore previous content, and **New** to start a fresh entry.
 
-## Deploy with GitHub Actions
+## Deploy
 
-1. Fork this repository to your GitHub account.
-2. In Cloudflare, create a D1 database named `cf2past-db` and copy its **Database ID**.
-3. Create a Cloudflare API Token using the **Edit Cloudflare Workers** template, and copy your **Account ID**.
-4. In GitHub, open **Settings → Secrets and variables → Actions** and add:
+### Recommended: browser-only deployment
 
-   - `CLOUDFLARE_API_TOKEN`
-   - `CLOUDFLARE_ACCOUNT_ID`
-   - `CLOUDFLARE_D1_DATABASE_ID`
+This is the easiest option for most users. You only need GitHub and Cloudflare in the browser; no local terminal is required.
 
-5. Initialize the D1 database once from a local clone:
+#### 1. Fork the repository
 
-```bash
-git clone https://github.com/<your-name>/cf2paste.git
-cd cf2paste
-npm install
-npx wrangler login
-npx wrangler d1 execute cf2past-db --remote --file=schema.sql
+Open this repository on GitHub and click **Fork** to create your own copy.
+
+If GitHub Actions is disabled in the fork, open **Actions** and enable workflows first.
+
+#### 2. Create the D1 database in Cloudflare
+
+1. Open the Cloudflare Dashboard.
+2. Go to **Storage & databases → D1 SQL Database**.
+3. Click **Create Database**.
+4. Use `cf2past-db` as the database name.
+5. Open the database after it is created.
+
+#### 3. Initialize D1 from the browser
+
+1. In your GitHub fork, open `schema.sql` and copy all of its contents.
+2. In Cloudflare, open the D1 database and select **Console**.
+3. Paste the contents of `schema.sql` and click **Execute**.
+
+The database is now ready; no local `wrangler d1 execute` command is required.
+
+#### 4. Get the three Cloudflare values
+
+You need three values for GitHub Actions:
+
+**`CLOUDFLARE_D1_DATABASE_ID`**
+
+Open the D1 database you just created and copy its **Database ID / UUID**.
+
+**`CLOUDFLARE_ACCOUNT_ID`**
+
+In the Cloudflare Dashboard, press `Ctrl/Cmd + K`, search for **Copy account ID**, and copy it. You can also find it under **Workers & Pages → Account Details**.
+
+**`CLOUDFLARE_API_TOKEN`**
+
+1. In Cloudflare, go to **Manage Account → API Tokens**.
+2. Click **Create Token**.
+3. Choose the **Edit Cloudflare Workers** template.
+4. Select the Cloudflare account you want to deploy to.
+5. Create the token and copy the token value.
+
+The token value is normally shown only once. Paste the token itself into GitHub; do not add `Bearer ` before it.
+
+#### 5. Add the values to GitHub Secrets
+
+In your fork, open:
+
+**Settings → Secrets and variables → Actions → New repository secret**
+
+Add these three secrets with the exact names below:
+
+```text
+CLOUDFLARE_API_TOKEN
+CLOUDFLARE_ACCOUNT_ID
+CLOUDFLARE_D1_DATABASE_ID
 ```
 
-6. Push or merge to `main`. GitHub Actions will run tests first and deploy to Cloudflare only after verification succeeds.
+#### 6. Choose the Worker name and trigger the first deployment
 
-## Deploy manually to Cloudflare
+You do **not** need to create a Worker manually in Cloudflare first. The first successful GitHub Actions deployment will create it automatically.
 
-Requirements: a Cloudflare account and Node.js 24+.
+In your GitHub fork:
+
+1. Open `wrangler.example.toml`.
+2. Click the pencil icon to edit it in the browser.
+3. Change the first line, for example:
+
+```toml
+name = "cf2paste-yourname"
+```
+
+4. Click **Commit changes** and commit directly to `main`.
+
+That commit triggers **Actions → CI and Deploy**. After the `verify` job passes, GitHub will run the Cloudflare deployment automatically.
+
+If you already have an Actions run from an earlier attempt, you can also open that run and choose **Re-run all jobs** after fixing the Secrets.
+
+#### 7. Find the Worker in Cloudflare
+
+After GitHub Actions is green:
+
+1. Open **Cloudflare Dashboard → Workers & Pages**.
+2. Open the Worker name you set in `wrangler.example.toml`.
+3. The Worker page shows its deployment status and `workers.dev` URL.
+4. Open that URL and visit `/setup` to create the first account.
+
+GitHub Actions will update the same Worker on later pushes to `main`.
+
+### Local deployment
+
+For users who prefer Wrangler locally, Node.js 24+ is required.
 
 ```bash
 git clone https://github.com/mumu-140/cf2paste.git
@@ -63,7 +135,7 @@ npx wrangler d1 create cf2past-db
 cp wrangler.example.toml wrangler.toml
 ```
 
-Replace `YOUR_D1_DATABASE_ID` in `wrangler.toml` with the D1 Database ID returned by Cloudflare, then initialize and deploy:
+Replace `YOUR_D1_DATABASE_ID` in `wrangler.toml` with the D1 database ID returned by Cloudflare. You may also change the `name` field to your preferred Worker name. Then initialize and deploy:
 
 ```bash
 npx wrangler d1 execute cf2past-db --remote --file=schema.sql
